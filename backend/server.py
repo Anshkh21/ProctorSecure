@@ -6,8 +6,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from pydantic import BaseModel, Field, model_validator
+from typing import List, Optional, Dict, Any, Union
 import uuid
 from datetime import datetime, timedelta
 import jwt
@@ -32,9 +32,16 @@ db = client[os.environ['DB_NAME']]
 app = FastAPI()
 
 # Add CORS Middleware early
+origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -82,11 +89,20 @@ class Exam(BaseModel):
 class Question(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     exam_id: str
-    type: str  # multiple-choice, text
+    type: str = "multiple-choice"
     question: str
     options: Optional[List[str]] = None
-    correct_answer: Optional[int] = None
-    time_limit: int  # seconds
+    correct_answer: Optional[Union[int, str]] = None
+    time_limit: int = 60
+    points: int = 1
+    
+    @model_validator(mode='before')
+    @classmethod
+    def map_text_to_question(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            if 'text' in data and 'question' not in data:
+                data['question'] = data['text']
+        return data
 
 class ExamSession(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -99,6 +115,7 @@ class ExamSession(BaseModel):
     verification_status: str = "pending"  # pending, verified, failed
     webcam_enabled: bool = False
     face_detected: bool = False
+    status: str = "pending"  # active, completed, terminated
 
 class ExamEnrollment(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -119,10 +136,26 @@ class ProctoringFlag(BaseModel):
     evidence_image: Optional[str] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
+    model_config = {
+        "extra": "ignore"
+    }
+
 class MonitorRequest(BaseModel):
     image_data: str
     screen_data: Optional[str] = None
     client_warnings: List[str] = [] # Warnings detected by frontend (audio, tab switch)
+
+
+
+class CreateFlagRequest(BaseModel):
+    student_id: str
+    session_id: str
+    flag_type: str
+    description: str
+    severity: str
+
+class StartSessionRequest(BaseModel):
+    exam_id: str
 
 class FaceDetectionRequest(BaseModel):
     image_data: str  # base64 encoded image
@@ -174,6 +207,8 @@ async def verify_exam_ownership(exam_id: str, proctor_id: str):
     if exam.get("proctor_id") != proctor_id:
         raise HTTPException(status_code=403, detail="You do not own this exam")
     return exam
+
+
 
 
 def detect_faces_in_image(image_data: str) -> FaceDetectionResponse:
@@ -473,6 +508,7 @@ async def invite_proctor(request: ProctorInviteRequest, admin: dict = Depends(re
         raise HTTPException(status_code=400, detail="Email already registered")
     
     # Generate temporary password (admin should share this securely)
+    # Generate temporary password (admin should share this securely)
     temp_password = f"Proctor{str(uuid.uuid4())[:8]}"
     hashed_password = bcrypt.hashpw(temp_password.encode(), bcrypt.gensalt()).decode()
     
@@ -609,6 +645,8 @@ async def delete_exam(exam_id: str, current_user: dict = Depends(get_current_use
     
     return {"message": "Exam deleted successfully"}
 
+
+
 @api_router.get("/proctor/exams/{exam_id}")
 async def get_exam_details(exam_id: str, current_user: dict = Depends(get_current_user)):
     """Get full exam details including questions"""
@@ -638,10 +676,10 @@ async def get_exam_details(exam_id: str, current_user: dict = Depends(get_curren
         return {
             **exam,
             "questions": [{
-                "text": q["text"],
-                "options": q["options"],
-                "correct_answer": q["correct_answer"],
-                "points": q["points"]
+                "text": q.get("text") or q.get("question") or "Question text missing",
+                "options": q.get("options", []),
+                "correct_answer": q.get("correct_answer"),
+                "points": q.get("points", 1)
             } for q in questions]
         }
     except Exception as e:
@@ -697,30 +735,7 @@ async def update_exam(exam_id: str, request: ExamCreateRequest, current_user: di
              
     return {**exam, "title": request.title} # Return updated basic info
 
-class ExamUpdateRequest(BaseModel):
-    title: Optional[str] = None
-    subject: Optional[str] = None
-    duration: Optional[int] = None
-    total_questions: Optional[int] = None
-    scheduled_at: Optional[datetime] = None
-    instructions: Optional[List[str]] = None
 
-@api_router.put("/proctor/exams/{exam_id}")
-async def update_exam(exam_id: str, request: ExamUpdateRequest, current_user: dict = Depends(get_current_user)):
-    if current_user["role"] != "proctor":
-        raise HTTPException(status_code=403, detail="Access denied")
-        
-    update_data = {k: v for k, v in request.dict().items() if v is not None}
-    
-    if not update_data:
-        raise HTTPException(status_code=400, detail="No data provided to update")
-        
-    result = await db.exams.update_one({"id": exam_id}, {"$set": update_data})
-    
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Exam not found")
-        
-    return {"message": "Exam updated successfully"}
 
 @api_router.get("/exams/{exam_id}/questions", response_model=List[Question])
 async def get_exam_questions(exam_id: str, current_user: dict = Depends(get_current_user)):
@@ -831,7 +846,18 @@ async def get_proctor_students(proctor: dict = Depends(require_proctor)):
         return []
     
     # Get all active sessions for these exams
-    sessions = await db.exam_sessions.find({"exam_id": {"$in": exam_ids}}).to_list(1000)
+    # [UPDATED] Removed 'in_progress' filter to show results for completed exams too
+    sessions = await db.exam_sessions.find({
+        "exam_id": {"$in": exam_ids}
+    }).to_list(1000)
+
+    # [NEW] Prefetch questions for grading (Self-Healing Logic)
+    all_questions = await db.questions.find({"exam_id": {"$in": exam_ids}}).to_list(10000)
+    questions_map = {} # exam_id -> list of questions
+    for q in all_questions:
+        if q["exam_id"] not in questions_map:
+            questions_map[q["exam_id"]] = []
+        questions_map[q["exam_id"]].append(q)
     
     # Build student list with session data
     result = []
@@ -840,19 +866,64 @@ async def get_proctor_students(proctor: dict = Depends(require_proctor)):
         if student:
             exam = next((e for e in proctor_exams if e["id"] == session["exam_id"]), None)
             
+            # [NEW] Self-Healing: Recalculate score if missing for completed exams
+            score = session.get("score", 0)
+            total_points = session.get("total_points", 0)
+            percentage = session.get("percentage", 0)
+
+            if session.get("status") == "completed" and (total_points == 0 or "score" not in session):
+                 # Calculate now
+                 exam_questions = questions_map.get(session["exam_id"], [])
+                 if exam_questions:
+                     calc_score = 0
+                     calc_total = 0
+                     student_answers = session.get("answers", {})
+                     
+                     for q in exam_questions:
+                         points = q.get("points", 1)
+                         calc_total += points
+                         q_id = q.get("id")
+                         q_id = q.get("id")
+                         if q_id in student_answers: 
+                             # Normalize comparison
+                             student_val = str(student_answers[q_id]).strip().lower()
+                             correct_val = str(q.get("correct_answer")).strip().lower()
+                             
+                             if student_val == correct_val:
+                                 calc_score += points
+                     
+                     # Update session in DB
+                     score = calc_score
+                     total_points = calc_total
+                     percentage = (score / total_points * 100) if total_points > 0 else 0
+                     
+                     await db.exam_sessions.update_one(
+                         {"id": session["id"]},
+                         {"$set": {
+                             "score": score,
+                             "total_points": total_points,
+                             "percentage": percentage
+                         }}
+                     )
+
             result.append({
                 "id": student["id"],
+                "sessionId": session["id"],
                 "name": student["name"],
                 "email": student["email"],
                 "examId": session["exam_id"],
                 "examTitle": exam["title"] if exam else "Unknown",
-                "status": session.get("verification_status", "pending"),
+                "status": session.get("status", "pending"), # status (in_progress, completed)
+                "verification_status": session.get("verification_status", "pending"),
                 "progress": min(100, int((session.get("current_question_index", 0) / exam.get("total_questions", 1)) * 100)) if exam else 0,
                 "webcam_status": "active" if session.get("webcam_enabled") else "inactive",
                 "screen_status": "monitored" if session.get("face_detected") else "not_monitored",
-                "flag_count": 0,
-                "time_remaining": max(0, exam.get("duration", 0) - 10) if exam else 0,
-                "last_active": session.get("start_time", datetime.utcnow()).isoformat()
+                "flag_count": await db.proctoring_flags.count_documents({"session_id": session["id"]}),
+                "time_remaining": max(0, exam.get("duration", 0) - (datetime.utcnow() - session.get("start_time", datetime.utcnow())).total_seconds() / 60) if exam else 0,
+                "last_active": session.get("start_time", datetime.utcnow()).isoformat(),
+                "score": score,
+                "total_points": total_points,
+                "percentage": percentage
             })
     
     return result
@@ -877,7 +948,38 @@ async def get_proctor_flags(proctor: dict = Depends(require_proctor)):
     # Get all flags for these sessions
     flags = await db.proctoring_flags.find({"session_id": {"$in": session_ids}}).to_list(1000)
     
-    return flags
+    # [NEW] Enrich flags with student and exam info
+    result_flags = []
+    
+    # Prefetch users and exams for lookups
+    all_students = await db.users.find({"role": "student"}).to_list(10000)
+    student_map = {str(s["id"]): s for s in all_students}
+    
+    # Exam map is already proctor_exams
+    exam_map = {str(e["id"]): e for e in proctor_exams}
+    
+    # Session map
+    session_map = {str(s["id"]): s for s in sessions}
+
+    # Serialize _id
+    for flag in flags:
+        flag["id"] = str(flag["_id"]) if "_id" in flag else flag.get("id")
+        if "_id" in flag:
+            del flag["_id"]
+            
+        # Enrich
+        session = session_map.get(flag["session_id"])
+        if session:
+             student = student_map.get(session["student_id"])
+             exam = exam_map.get(session["exam_id"])
+             
+             flag["student_name"] = student["name"] if student else "Unknown"
+             flag["exam_title"] = exam["title"] if exam else "Unknown"
+             flag["exam_id"] = session["exam_id"]
+        
+        result_flags.append(flag)
+            
+    return result_flags
 
 # Face detection route
 @api_router.post("/verification/face-detect", response_model=FaceDetectionResponse)
@@ -885,9 +987,18 @@ async def detect_face(request: FaceDetectionRequest):
     return detect_faces_in_image(request.image_data)
 
 # Exam session routes
+# Exam session routes
 @api_router.post("/session/start")
-async def start_exam_session(exam_id: str, current_user: dict = Depends(get_current_user)):
+async def start_exam_session(
+    request: StartSessionRequest, 
+    current_user: dict = Depends(get_current_user)
+):
     """Start an exam session - student must be enrolled"""
+    exam_id = request.exam_id
+        
+    if not exam_id:
+        raise HTTPException(status_code=400, detail="Exam ID required")
+
     # Verify exam exists
     exam = await db.exams.find_one({"id": exam_id})
     if not exam:
@@ -905,16 +1016,40 @@ async def start_exam_session(exam_id: str, current_user: dict = Depends(get_curr
                 status_code=403, 
                 detail="You are not enrolled in this exam. Please contact your proctor."
             )
+            
+        # Check if session already exists
+        existing_session = await db.exam_sessions.find_one({
+            "student_id": current_user["id"],
+            "exam_id": exam_id,
+            "status": "in_progress"
+        })
+        
+        if existing_session:
+             return {
+                 "session_id": existing_session["id"], 
+                 "message": "Resumed existing session", 
+                 "proctor_id": exam.get("proctor_id"),
+                 "start_time": existing_session.get("start_time", datetime.utcnow()).isoformat(),
+                 "duration": exam.get("duration")
+             }
     
     # Create session with proctor_id from the exam
     session = ExamSession(
         student_id=current_user["id"],
         exam_id=exam_id,
-        proctor_id=exam.get("proctor_id", "unknown")  # Track which proctor's exam this is
+        proctor_id=exam.get("proctor_id", "unknown"),  # Track which proctor's exam this is
+        status="in_progress",
+        webcam_enabled=True
     )
     
     await db.exam_sessions.insert_one(session.dict())
-    return {"session_id": session.id, "message": "Exam session started"}
+    return {
+        "session_id": session.id, 
+        "message": "Exam session started", 
+        "proctor_id": exam.get("proctor_id"),
+        "start_time": session.start_time.isoformat(),
+        "duration": exam.get("duration")
+    }
 
 @api_router.post("/session/{session_id}/answer")
 async def save_answer(
@@ -954,8 +1089,17 @@ async def verify_identity_endpoint(
         nparr = np.frombuffer(webcam_img_data, np.uint8)
         webcam_img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
+        if webcam_img is None:
+            print("ERROR: Failed to decode webcam image")
+            return VerificationResponse(
+                is_valid=False,
+                message="Invalid webcam image format",
+                warnings=["Image decoding failed"]
+            )
+                
         # 1. Basic Face Detection check
         analysis = proctor_model.analyze_frame(webcam_img)
+        
         if analysis["face_count"] != 1:
             return VerificationResponse(
                 is_valid=False,
@@ -975,6 +1119,14 @@ async def verify_identity_endpoint(
                 nparr_id = np.frombuffer(id_img_data, np.uint8)
                 id_img = cv2.imdecode(nparr_id, cv2.IMREAD_COLOR)
                 
+                if id_img is None:
+                    print("ERROR: Failed to decode ID card image")
+                    return VerificationResponse(
+                        is_valid=False,
+                        message="Invalid ID card image format",
+                        warnings=["ID Image decoding failed"]
+                    )
+                                
                 # Verify match
                 match_result = proctor_model.verify_face_match(id_img, webcam_img)
                 
@@ -1017,7 +1169,11 @@ async def verify_id_card_endpoint(
 ):
     try:
         # Decode image
-        image_data = base64.b64decode(request.image_data.split(',')[1])
+        if ',' in request.image_data:
+            image_data = base64.b64decode(request.image_data.split(',')[1])
+        else:
+            image_data = base64.b64decode(request.image_data)
+            
         nparr = np.frombuffer(image_data, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
@@ -1112,7 +1268,7 @@ async def monitor_session(
                     severity=severity,
                     evidence_image=request.image_data # Save the full base64 string
                 )
-                await db.flags.insert_one(flag.dict())
+                await db.proctoring_flags.insert_one(flag.dict())
 
         # Update Session with latest status
         await db.exam_sessions.update_one(
@@ -1168,7 +1324,7 @@ async def analyze_frame_enhanced(
         # Log anomaly score to database
         if result.get('anomaly_scoring', {}).get('enabled'):
             await db.exam_sessions.update_one(
-                {'session_id': session_id},
+                {'id': session_id},
                 {
                     '$push': {
                         'anomaly_scores': {
@@ -1179,7 +1335,10 @@ async def analyze_frame_enhanced(
                     '$set': {
                         'last_analysis': datetime.utcnow(),
                         'face_detected': result.get('face_count', 0) > 0,
-                        'last_active': datetime.utcnow()
+                        'last_active': datetime.utcnow(),
+                         # LIVE STREAMING: Store latest frame for proctor view
+                        'latest_frame': request.image_data, # Store base64
+                        'latest_screen': request.screen_data if request.screen_data else None
                     }
                 }
             )
@@ -1225,7 +1384,7 @@ async def analyze_frame_enhanced(
                     severity=severity,
                     evidence_image=request.image_data
                 )
-                await db.flags.insert_one(flag.dict())
+                await db.proctoring_flags.insert_one(flag.dict())
         
         # Create flags for Research Paper Violations (High Severity)
         if result.get('should_alert'):
@@ -1241,7 +1400,7 @@ async def analyze_frame_enhanced(
                     severity="high",
                     evidence_image=request.image_data
                 )
-                await db.flags.insert_one(flag.dict())
+                await db.proctoring_flags.insert_one(flag.dict())
             
             # Object detection violations
             if result.get('object_detection', {}).get('violations'):
@@ -1254,7 +1413,7 @@ async def analyze_frame_enhanced(
                         severity="high",
                         evidence_image=request.image_data
                     )
-                    await db.flags.insert_one(flag.dict())
+                    await db.proctoring_flags.insert_one(flag.dict())
         
         return {
             "status": "success",
@@ -1267,6 +1426,155 @@ async def analyze_frame_enhanced(
         print(f"Enhanced analysis error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+
+
+@api_router.post("/session/{session_id}/submit")
+async def submit_exam(
+    session_id: str,
+    submission: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Submit exam answers and end session.
+    """
+    try:
+        # Verify session exists and belongs to user
+        session = await db.exam_sessions.find_one({
+            "id": session_id,
+            "student_id": current_user["id"]
+        })
+        
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        if session.get("status") == "completed":
+             return {"message": "Exam already submitted"}
+
+        # [NEW] Calculate Score
+        exam = await db.exams.find_one({"id": session["exam_id"]})
+        questions = await db.questions.find({"exam_id": session["exam_id"]}).to_list(1000)
+        
+        score = 0
+        total_points = 0
+        
+        student_answers = submission.get("answers", {})
+
+        for q in questions:
+            q_id = q.get("id")
+            points = q.get("points", 1)
+            total_points += points
+            
+            # Simple exact match grading (Normalized)
+            if q_id in student_answers:
+                student_val = str(student_answers[q_id]).strip().lower()
+                correct_val = str(q.get("correct_answer")).strip().lower()
+                
+                if student_val == correct_val:
+                    score += points
+
+        # Update session
+        update_data = {
+            "status": "completed",
+            "end_time": datetime.utcnow(),
+            "answers": student_answers,
+            "verification_status": "verified",
+            "score": score,
+            "total_points": total_points,
+            "percentage": (score / total_points * 100) if total_points > 0 else 0
+        }
+        
+        await db.exam_sessions.update_one(
+            {"id": session_id},
+            {"$set": update_data}
+        )
+        
+        return {
+            "message": "Exam submitted successfully", 
+            "score": score, 
+            "total": total_points
+        }
+        
+
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404) directly
+        raise
+    except Exception as e:
+        print(f"Submission error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@api_router.get("/proctor/analytics")
+async def get_proctor_analytics(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "proctor":
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Fetch all sessions
+    sessions = await db.exam_sessions.find({}).to_list(10000)
+    
+    # Fetch all questions
+    all_questions = await db.questions.find({}).to_list(10000)
+    questions_map = {str(q["id"]): q for q in all_questions}
+
+    total_duration_seconds = 0
+    total_questions_answered = 0
+    question_stats = {} # q_id -> {correct: 0, total: 0}
+
+    for session in sessions:
+        # 1. Time Calculation
+        if session.get("status") == "completed" and session.get("start_time") and session.get("end_time"):
+            try:
+                start = session["start_time"]
+                end = session["end_time"]
+                if isinstance(start, str): start = datetime.fromisoformat(start.replace("Z", ""))
+                if isinstance(end, str): end = datetime.fromisoformat(end.replace("Z", ""))
+                
+                duration = (end - start).total_seconds()
+                if 0 < duration < 18000: # Filter out unreasonable durations
+                    ans_count = len(session.get("answers", {}))
+                    if ans_count > 0:
+                        total_duration_seconds += duration
+                        total_questions_answered += ans_count
+            except Exception:
+                pass
+
+        # 2. Difficulty Calculation
+        answers = session.get("answers", {})
+        for q_id, student_ans in answers.items():
+            if q_id not in questions_map: continue
+            
+            if q_id not in question_stats:
+                question_stats[q_id] = {"correct": 0, "total": 0}
+            
+            question_stats[q_id]["total"] += 1
+            
+            correct_ans = questions_map[q_id].get("correct_answer", "")
+            # Robust Comparison
+            if str(student_ans).strip().lower() == str(correct_ans).strip().lower():
+                question_stats[q_id]["correct"] += 1
+
+    # Compute Final Metrics
+    avg_time = 0
+    if total_questions_answered > 0:
+        avg_time = (total_duration_seconds / 60) / total_questions_answered
+
+    most_difficult = "N/A"
+    lowest_ratio = 1.1
+    
+    for q_id, stats in question_stats.items():
+        if stats["total"] > 0:
+            ratio = stats["correct"] / stats["total"]
+            if ratio < lowest_ratio:
+                lowest_ratio = ratio
+                q_text = questions_map[q_id].get("text", "Unknown")
+                most_difficult = (q_text[:40] + '..') if len(q_text) > 40 else q_text
+
+    return {
+        "average_time_per_question": round(avg_time, 1),
+        "most_difficult_question": most_difficult
+    }
 
 
 # Proctor routes
@@ -1290,82 +1598,49 @@ async def get_available_students(current_user: dict = Depends(get_current_user))
         for s in students
     ]
 
-@api_router.get("/proctor/students")
-async def get_students(current_user: dict = Depends(get_current_user)):
-    if current_user["role"] != "proctor":
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    # Get active exam sessions with student info
-    sessions = await db.exam_sessions.find({"verification_status": "verified"}).to_list(1000)
-    
-    students = []
-    for session in sessions:
-        user = await db.users.find_one({"id": session["student_id"]})
-        exam = await db.exams.find_one({"id": session["exam_id"]})
-        
-        if user and exam:
-            total_questions = exam.get("total_questions", 1)
-            answered_count = len(session.get("answers", {}))
-            progress = min(100, int((answered_count / total_questions) * 100)) if total_questions > 0 else 0
-            
-            # Count flags for this session
-            flag_count = await db.flags.count_documents({"session_id": session["id"]})
-            
-            # Determine status based on flags and webcam
-            status = "verified"
-            if flag_count >= 3:
-                status = "flagged" 
-            elif flag_count > 0:
-                status = "warning"
-                
-            students.append({
-                "id": session["student_id"],
-                "name": user["name"],
-                "email": user["email"],
-                "session_id": session["id"],
-                "exam_id": session["exam_id"],
-                "status": status,
-                "webcam_status": "active" if session.get("webcam_enabled") else "inactive",
-                "screen_status": "monitored", # Placeholder as we don't track this yet
-                "face_detected": session.get("face_detected", False),
-                "progress": progress,
-                "flag_count": flag_count,
-                "time_remaining": 120, # Placeholder, should calc from start_time + duration
-                "start_time": session["start_time"],
-                "last_active": session.get("last_active", session["start_time"])
-            })
-    
-    return students
 
-@api_router.get("/proctor/flags")
-async def get_flags(current_user: dict = Depends(get_current_user)):
-    if current_user["role"] != "proctor":
-        raise HTTPException(status_code=403, detail="Access denied")
-    
-    flags = await db.flags.find().sort("timestamp", -1).to_list(100)
-    return [ProctoringFlag(**flag) for flag in flags]
 
 @api_router.post("/proctor/flag")
 async def create_flag(
-    student_id: str,
-    flag_type: str,
-    description: str,
-    severity: str,
+    flag_data: CreateFlagRequest,
     current_user: dict = Depends(get_current_user)
 ):
     if current_user["role"] != "proctor":
         raise HTTPException(status_code=403, detail="Access denied")
     
     flag = ProctoringFlag(
-        student_id=student_id,
-        session_id="",  # Should be provided
-        type=flag_type,
-        description=description,
-        severity=severity
+        student_id=flag_data.student_id,
+        session_id=flag_data.session_id,
+        type=flag_data.flag_type,
+        description=flag_data.description,
+        severity=flag_data.severity
     )
-    
-    await db.flags.insert_one(flag.dict())
+    await db.proctoring_flags.insert_one(flag.dict())
     return {"message": "Flag created", "flag_id": flag.id}
+
+@api_router.get("/student/session/{session_id}/flags")
+async def get_student_session_flags(
+    session_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get flags for a specific session (Student access).
+    Only returns flags for the current student's session.
+    """
+    # Verify session belongs to student
+    session = await db.exam_sessions.find_one({
+        "id": session_id,
+        "student_id": current_user["id"]
+    })
+    
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    flags = await db.proctoring_flags.find({
+        "session_id": session_id
+    }).to_list(1000)
+    
+    return flags
 
 # Legacy routes
 @api_router.get("/")
@@ -1395,7 +1670,7 @@ async def get_overall_metrics(
     Get overall system performance metrics.
     """
     try:
-        if not ANALYTICS_AVAILABLE:
+        if not ANALYTICS_AVAILABLE or analytics is None:
              return {
                 "confusion_matrix": {"TP": 0, "FP": 0, "TN": 0, "FN": 0},
                 "metrics": {"precision": 0.0, "recall": 0.0, "f1_score": 0.0, "accuracy": 0.0},
@@ -1453,6 +1728,25 @@ async def get_session_analytics(
         print(f"Session analytics error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@api_router.get("/proctor/session/{session_id}/live")
+async def get_session_live_feed(
+    session_id: str,
+    current_user: dict = Depends(require_proctor)
+):
+    """
+    Get latest frames for live monitoring
+    """
+    session = await db.exam_sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    return {
+        "webcam_frame": session.get("latest_frame"),
+        "screen_frame": session.get("latest_screen"),
+        "last_active": session.get("last_active"),
+        "face_detected": session.get("face_detected", False)
+    }
+
 
 @api_router.get("/admin/analytics/export")
 async def export_metrics_report(
@@ -1497,117 +1791,8 @@ async def get_system_status():
         "paper_compliance": "90%"
     }
 
-@api_router.post("/verify/id-card")
-async def verify_id_card(
-    request: dict,
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Verify student ID card.
-    Checks if the name on the ID card matches the student's name.
-    """
-    try:
-        image_data = request.get("image_data")
-        if not image_data:
-            raise HTTPException(status_code=400, detail="Image data required")
-            
-        # Decode image
-        if ',' in image_data:
-            image_data = image_data.split(',')[1]
-            
-        image_bytes = base64.b64decode(image_data)
-        image = Image.open(BytesIO(image_bytes))
-        image_np = np.array(image)
-        if image_np.shape[-1] == 4:
-            image_np = cv2.cvtColor(image_np, cv2.COLOR_RGBA2BGR)
-        else:
-            image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
 
-        # Verify ID
-        result = proctor_model.verify_id_name(image_np, current_user["name"])
-        
-        # If OCR fails or is empty, we might want to manually approve or soft-pass for now
-        # allowing manual override if needed. For now, strict check but with fallback?
-        # User said "It should verify the id correctly". 
-        # If result['match'] is False, it fails.
-        
-        return {
-            "is_valid": result["match"],
-            "message": "ID verification successful" if result["match"] else f"ID name mismatch. Found: {result['extracted_text'][:20]}...",
-            "details": result
-        }
 
-    except Exception as e:
-        print(f"ID Verification error: {e}")
-        # Improve fallback for dev/testing if OCR is missing
-        return {"is_valid": True, "message": "ID verification bypassed (Dev mode)"}
-
-@api_router.post("/verify/identity")
-async def verify_identity(
-    request: dict,
-    current_user: dict = Depends(get_current_user)
-):
-    """
-    Verify student identity (Face).
-    Checks if a face is present and matches the ID (if applicable).
-    """
-    try:
-        print("=== FACE VERIFICATION REQUEST ===")
-        print(f"User: {current_user.get('email')}")
-        
-        image_data = request.get("image_data")
-        if not image_data:
-            print("ERROR: No image data provided")
-            raise HTTPException(status_code=400, detail="Image data required")
-
-        # Decode image
-        if ',' in image_data:
-            image_data = image_data.split(',')[1]
-            
-        print("Decoding image...")
-        image_bytes = base64.b64decode(image_data)
-        image = Image.open(BytesIO(image_bytes))
-        image_np = np.array(image)
-        
-        print(f"Image shape: {image_np.shape}")
-        
-        if image_np.shape[-1] == 4:
-            image_np = cv2.cvtColor(image_np, cv2.COLOR_RGBA2BGR)
-        else:
-            image_np = cv2.cvtColor(image_np, cv2.COLOR_RGB2BGR)
-
-        print("Calling proctor_model.verify_identity...")
-        # Check for face presence
-        face_valid = proctor_model.verify_identity(image_np, None)
-        
-        print(f"Face verification result: {face_valid}")
-        
-        if face_valid:
-            return {
-                "is_valid": True,
-                "message": "Identity verified successfully",
-                "faces_detected": 1
-            }
-        else:
-             return {
-                "is_valid": False,
-                "message": "No face detected or multiple faces found. Please align your face clearly.",
-                "faces_detected": 0
-            }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        error_details = traceback.format_exc()
-        print(f"=== FACE VERIFICATION ERROR ===")
-        print(error_details)
-        print(f"Error: {str(e)}")
-        return {
-            "is_valid": False, 
-            "message": f"Verification error: {str(e)}",
-            "faces_detected": 0
-        }
 
 # Include the router in the main app
 app.include_router(api_router)

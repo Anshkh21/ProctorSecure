@@ -7,7 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { useToast } from '../hooks/use-toast';
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 const API = `${BACKEND_URL}/api`;
 
 const Register = () => {
@@ -134,7 +134,7 @@ const Register = () => {
             
             <div className="text-center text-sm">
               Already have an account?{" "}
-              <Button variant="link" className="p-0 h-auto font-normal" onClick={() => navigate('/login')}>
+              <Button variant="link" className="p-0 h-auto font-normal" onClick={() => navigate('/')}>
                 Login
               </Button>
             </div>

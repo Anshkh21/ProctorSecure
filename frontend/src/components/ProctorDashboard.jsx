@@ -47,6 +47,8 @@ const ProctorDashboard = () => {
   const [enrollments, setEnrollments] = useState([]);
   const [emailInput, setEmailInput] = useState('');
   const [enrollingStudents, setEnrollingStudents] = useState(false);
+  const [liveFeed, setLiveFeed] = useState({ webcam: null, screen: null });
+  const [analytics, setAnalytics] = useState({ average_time_per_question: 0, most_difficult_question: 'N/A' });
   const navigate = useNavigate();
 
   const fetchDashboardData = async () => {
@@ -61,10 +63,11 @@ const ProctorDashboard = () => {
         headers: { Authorization: `Bearer ${token}` }
       };
       
-      const [studentsRes, flagsRes, examsRes] = await Promise.all([
+      const [studentsRes, flagsRes, examsRes, analyticsRes] = await Promise.all([
         axios.get(`${API}/proctor/students`, config),
         axios.get(`${API}/proctor/flags`, config),
-        axios.get(`${API}/exams`, config) // Fetch exams too
+        axios.get(`${API}/exams`, config),
+        axios.get(`${API}/proctor/analytics`, config)
       ]);
       
       // Transform backend data to match UI expected format if needed
@@ -75,12 +78,17 @@ const ProctorDashboard = () => {
         screenStatus: s.screen_status,
         flagCount: s.flag_count,
         timeRemaining: s.time_remaining,
-        lastActivity: s.last_active
+        lastActivity: s.last_active,
+        exam_title: s.examTitle // Map camelCase from backend to snake_case expected by UI
       }));
       
       setStudents(studentsData);
-      setFlags(flagsRes.data);
+      setFlags(flagsRes.data.map(flag => ({
+          ...flag,
+          studentId: flag.student_id // Fix mismatch
+      })));
       setExams(examsRes.data); // Set exams data
+      setAnalytics(analyticsRes.data);
       
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -122,6 +130,32 @@ const ProctorDashboard = () => {
     };
   }, []);
 
+  // Poll for live feed when a student is selected
+  useEffect(() => {
+      let interval;
+      if (selectedStudent && selectedStudent.sessionId) {
+          const fetchLiveFeed = async () => {
+              try {
+                  const token = localStorage.getItem('token');
+                  const res = await axios.get(`${API}/proctor/session/${selectedStudent.sessionId}/live`, {
+                      headers: { Authorization: `Bearer ${token}` }
+                  });
+                  setLiveFeed({
+                      webcam: res.data.webcam_frame,
+                      screen: res.data.screen_frame
+                  });
+              } catch (err) {
+                  console.error("Error fetching live feed", err);
+              }
+          };
+          fetchLiveFeed(); // Initial fetch
+          interval = setInterval(fetchLiveFeed, 1000); // Poll every second (adjustable)
+      } else {
+          setLiveFeed({ webcam: null, screen: null });
+      }
+      return () => clearInterval(interval);
+  }, [selectedStudent]);
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'verified': return 'bg-green-100 text-green-800';
@@ -141,8 +175,9 @@ const ProctorDashboard = () => {
   };
 
   const filteredStudents = students.filter(student => 
-    student.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    student.email.toLowerCase().includes(searchTerm.toLowerCase())
+    (activeTab === 'results' ? student.status?.toLowerCase() === 'completed' : student.status?.toLowerCase() !== 'completed') &&
+    (student.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    student.email?.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   const totalStudents = students.length;
@@ -150,8 +185,11 @@ const ProctorDashboard = () => {
   const flaggedStudents = students.filter(s => s.status === 'flagged').length;
   const totalFlags = flags.length;
 
-  const formatTime = (timeString) => {
-    const date = new Date(timeString);
+  const formatTimestamp = (timeString) => {
+    if (!timeString) return 'N/A';
+    // Force UTC interpretation by appending 'Z' if missing (fixes local time assumption)
+    const ts = timeString.endsWith('Z') ? timeString : timeString + 'Z';
+    const date = new Date(ts);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
@@ -277,7 +315,8 @@ const ProctorDashboard = () => {
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6">
             <TabsTrigger value="overview">Overview</TabsTrigger>
-            <TabsTrigger value="students">Students</TabsTrigger>
+            <TabsTrigger value="students">Live Sessions</TabsTrigger>
+            <TabsTrigger value="results">Results</TabsTrigger>
             <TabsTrigger value="flags">Flags & Alerts</TabsTrigger>
             <TabsTrigger value="analytics">Analytics</TabsTrigger>
             <TabsTrigger value="exams">Exams</TabsTrigger>
@@ -368,7 +407,7 @@ const ProctorDashboard = () => {
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {students.slice(0, 3).map((student) => (
+                        {students.filter(s => s.status !== 'completed').slice(0, 3).map((student) => (
                           <div key={student.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                             <div className="flex items-center space-x-3">
                               <Avatar>
@@ -415,9 +454,11 @@ const ProctorDashboard = () => {
                             <div key={flag.id} className="flex items-start space-x-3 p-3 border border-gray-200 rounded-lg">
                               <div className={`w-3 h-3 rounded-full mt-2 ${getSeverityColor(flag.severity)}`}></div>
                               <div className="flex-1">
-                                <p className="font-medium text-gray-900">{student?.name}</p>
+                                <p className="font-medium text-gray-900">{flag.student_name || student?.name || 'Unknown Student'}</p>
                                 <p className="text-sm text-gray-600">{flag.description}</p>
-                                <p className="text-xs text-gray-500 mt-1">{formatTime(flag.timestamp)}</p>
+                                <p className="text-xs text-gray-500 mt-1">
+                                    {flag.exam_title} • {formatTimestamp(flag.timestamp)}
+                                </p>
                               </div>
                               <Badge variant="outline" className="text-xs">
                                 {flag.severity}
@@ -496,6 +537,16 @@ const ProctorDashboard = () => {
                       <Progress value={student.progress} />
                     </div>
                     
+                    {/* [NEW] Score Display for Completed Exams */}
+                    {student.status === 'completed' && (
+                        <div className="bg-blue-50 p-2 rounded text-center">
+                            <p className="text-xs text-blue-600 font-semibold uppercase">Final Score</p>
+                            <p className="text-lg font-bold text-blue-800">
+                                {student.score} / {student.total_points} ({student.percentage?.toFixed(1)}%)
+                            </p>
+                        </div>
+                    )}
+                    
                     <div className="grid grid-cols-2 gap-3 text-sm">
                       <div className="flex items-center space-x-2">
                         <Camera className={`w-4 h-4 ${student.webcamStatus === 'active' ? 'text-green-600' : 'text-red-600'}`} />
@@ -509,13 +560,100 @@ const ProctorDashboard = () => {
                     
                     <div className="flex justify-between items-center text-sm">
                       <span className="text-gray-600">Flags: {student.flagCount}</span>
-                      <span className="text-gray-600">Time: {student.timeRemaining}min</span>
+                      <span className="text-gray-600">Time: {student.timeRemaining ? Math.round(student.timeRemaining) : 0}min</span>
                     </div>
                   </CardContent>
                 </Card>
               ))}
             </div>
             )}
+          </TabsContent>
+
+          <TabsContent value="results" className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold text-gray-900">Exam Results</h2>
+              <div className="flex items-center space-x-4">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                  <Input 
+                    placeholder="Search results..." 
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="pl-10 w-64"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <Card>
+              <CardContent className="p-0">
+                <div className="relative w-full overflow-auto">
+                  <table className="w-full caption-bottom text-sm text-left">
+                    <thead className="[&_tr]:border-b bg-gray-50/50">
+                      <tr className="border-b transition-colors hover:bg-muted/50">
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Student</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Exam</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Submitted At</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Score</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Percentage</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredStudents.length === 0 ? (
+                        <tr>
+                          <td colSpan="6" className="p-8 text-center text-gray-500">
+                            <div className="flex flex-col items-center justify-center">
+                                <CheckCircle className="w-12 h-12 text-gray-300 mb-3" />
+                                <p className="text-lg font-medium text-gray-900">No Results Found</p>
+                                <p className="text-sm text-gray-500">Completed exams will appear here.</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredStudents.map((student) => (
+                            <tr key={student.id} className="border-b transition-colors hover:bg-gray-50/50">
+                              <td className="p-4 align-middle">
+                                <div className="flex items-center space-x-3">
+                                  <Avatar className="w-8 h-8">
+                                    <AvatarFallback className="text-xs">
+                                      {student.name?.split(' ').map(n => n[0]).join('')}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div>
+                                    <p className="font-medium text-gray-900">{student.name}</p>
+                                    <p className="text-xs text-gray-500">{student.email}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-4 align-middle">
+                                {student.exam_title || 'Unknown Exam'}
+                              </td>
+                              <td className="p-4 align-middle text-gray-500">
+                                {student.end_time ? formatTimestamp(student.end_time) : 'N/A'}
+                              </td>
+                              <td className="p-4 align-middle font-medium">
+                                {student.score} / {student.total_points}
+                              </td>
+                              <td className="p-4 align-middle">
+                                <Badge variant={student.percentage >= 50 ? "default" : "destructive"} 
+                                       className={student.percentage >= 50 ? "bg-green-100 text-green-800 border-green-200 hover:bg-green-100" : "bg-red-100 text-red-800 border-red-200 hover:bg-red-100"}>
+                                  {student.percentage?.toFixed(1)}%
+                                </Badge>
+                              </td>
+                              <td className="p-4 align-middle text-right">
+                                <Button size="sm" variant="outline" onClick={() => handleStudentClick(student)}>
+                                  View Details
+                                </Button>
+                              </td>
+                            </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="flags" className="space-y-6">
@@ -531,53 +669,82 @@ const ProctorDashboard = () => {
               </div>
             </div>
 
-            <div className="space-y-4">
-              {flags.map((flag) => {
-                const student = students.find(s => s.id === flag.studentId);
-                return (
-                  <Card key={flag.id} className={`border-l-4 ${
-                    flag.severity === 'high' ? 'border-red-500' : 
-                    flag.severity === 'medium' ? 'border-yellow-500' : 'border-blue-500'
-                  }`}>
-                    <CardContent className="p-6">
-                      <div className="flex items-start justify-between">
-                        <div className="space-y-2">
-                          <div className="flex items-center space-x-3">
-                            <Avatar className="w-8 h-8">
-                              <AvatarFallback className="text-xs">
-                                {student?.name.split(' ').map(n => n[0]).join('')}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div>
-                              <p className="font-medium text-gray-900">{student?.name}</p>
-                              <p className="text-sm text-gray-600">{student?.email}</p>
-                            </div>
-                          </div>
-                          <p className="text-gray-900">{flag.description}</p>
-                          <p className="text-sm text-gray-500">
-                            {new Date(flag.timestamp).toLocaleString()}
-                          </p>
-                        </div>
-                          <div className="flex items-center space-x-2">
-                            <Badge className={`${getSeverityColor(flag.severity)} text-white`}>
-                              {flag.severity.toUpperCase()}
-                            </Badge>
-                            {flag.evidence_image && (
-                                <Button size="sm" variant="outline" onClick={() => {
-                                    // Open evidence in a new window/tab or modal
-                                    const win = window.open();
-                                    win.document.write(`<img src="${flag.evidence_image}" style="max-width:100%"/>`);
-                                }}>
-                                  View Evidence
-                                </Button>
-                            )}
-                          </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
+            <Card>
+              <CardContent className="p-0">
+                <div className="relative w-full overflow-auto">
+                  <table className="w-full caption-bottom text-sm text-left">
+                    <thead className="[&_tr]:border-b bg-gray-50/50">
+                      <tr className="border-b transition-colors hover:bg-muted/50">
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground w-[100px]">Severity</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Student</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Incident</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Exam</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground">Time</th>
+                        <th className="h-12 px-4 align-middle font-medium text-muted-foreground text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {flags.length === 0 ? (
+                        <tr>
+                          <td colSpan="6" className="p-8 text-center text-gray-500">
+                            No flags reported. Clean sessions!
+                          </td>
+                        </tr>
+                      ) : (
+                        flags.map((flag) => {
+                          const student = students.find(s => s.id === flag.studentId);
+                          return (
+                            <tr key={flag.id} className="border-b transition-colors hover:bg-gray-50/50">
+                              <td className="p-4 align-middle">
+                                <Badge className={`${getSeverityColor(flag.severity)} text-white border-0`}>
+                                  {flag.severity.toUpperCase()}
+                                </Badge>
+                              </td>
+                              <td className="p-4 align-middle">
+                                <div className="flex items-center space-x-3">
+                                  <Avatar className="w-8 h-8">
+                                    <AvatarFallback className="text-xs">
+                                      {student?.name.split(' ').map(n => n[0]).join('')}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div>
+                                    <p className="font-medium text-gray-900">{student?.name || 'Unknown'}</p>
+                                    <p className="text-xs text-gray-500">{student?.email}</p>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="p-4 align-middle">
+                                <p className="font-medium text-gray-900">{flag.type.replace(/_/g, ' ').toUpperCase()}</p>
+                                <p className="text-xs text-gray-500">{flag.description}</p>
+                              </td>
+                              <td className="p-4 align-middle">
+                                {flag.exam_title || 'Unknown Exam'}
+                              </td>
+                              <td className="p-4 align-middle text-gray-500">
+                                {new Date(flag.timestamp.endsWith('Z') ? flag.timestamp : flag.timestamp + 'Z').toLocaleString()}
+                              </td>
+                              <td className="p-4 align-middle text-right">
+                                {flag.evidence_image ? (
+                                  <Button size="sm" variant="outline" className="h-8" onClick={() => {
+                                      const win = window.open();
+                                      win.document.write(`<div style="display:flex;justify-content:center;align-items:center;height:100vh;background:#000;"><img src="${flag.evidence_image}" style="max-width:90%;max-height:90%;border:2px solid white;box-shadow:0 0 20px rgba(255,255,255,0.2);"/></div>`);
+                                  }}>
+                                    <Eye className="w-3 h-3 mr-2" />
+                                    Evidence
+                                  </Button>
+                                ) : (
+                                  <span className="text-xs text-gray-400">No Evidence</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="analytics" className="space-y-6">
@@ -601,8 +768,8 @@ const ProctorDashboard = () => {
                     </div>
                     <div className="pt-4 space-y-2">
                       <p className="text-sm text-gray-600">Students completed: {students.filter(s => s.progress >= 100).length}</p>
-                      <p className="text-sm text-gray-600">Average time per question: 2.3 minutes</p>
-                      <p className="text-sm text-gray-600">Most difficult question: Question 15</p>
+                      <p className="text-sm text-gray-600">Average time per question: {analytics.average_time_per_question} minutes</p>
+                      <p className="text-sm text-gray-600">Most difficult question: {analytics.most_difficult_question}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -726,6 +893,78 @@ const ProctorDashboard = () => {
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="lg:col-span-2 space-y-6">
+                {selectedStudent.status === 'completed' ? (
+                    /* [NEW] Post-Exam Report View */
+                    <div className="space-y-6">
+                        <Card className="border-l-4 border-blue-500">
+                            <CardHeader>
+                                <CardTitle className="text-xl">Post-Exam Report</CardTitle>
+                                <CardDescription>Exam submitted on {formatTimestamp(selectedStudent.end_time)}</CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="grid grid-cols-3 gap-6 text-center">
+                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                        <p className="text-sm text-gray-500 uppercase tracking-wide">Final Score</p>
+                                        <p className="text-3xl font-bold text-gray-900 mt-1">{selectedStudent.score} / {selectedStudent.total_points}</p>
+                                    </div>
+                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                        <p className="text-sm text-gray-500 uppercase tracking-wide">Percentage</p>
+                                        <p className={`text-3xl font-bold mt-1 ${selectedStudent.percentage >= 50 ? 'text-green-600' : 'text-red-600'}`}>
+                                            {selectedStudent.percentage?.toFixed(1)}%
+                                        </p>
+                                    </div>
+                                    <div className="p-4 bg-gray-50 rounded-lg">
+                                        <p className="text-sm text-gray-500 uppercase tracking-wide">Security Flags</p>
+                                        <p className="text-3xl font-bold text-red-600 mt-1">{selectedStudent.flagCount}</p>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Flag Evidence Gallery for Completed Exams */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Flagged Incidents & Evidence</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                {flags.filter(f => f.studentId === selectedStudent.id).length === 0 ? (
+                                    <div className="text-center py-8 text-gray-500 bg-gray-50 rounded-lg border border-dashed">
+                                        <CheckCircle className="w-10 h-10 mx-auto text-green-500 mb-2" />
+                                        <p>No incidents reported during this session.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-4">
+                                        {flags.filter(f => f.studentId === selectedStudent.id).map((flag) => (
+                                            <div key={flag.id} className="flex items-start space-x-4 p-4 border rounded-lg bg-gray-50">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center space-x-2 mb-1">
+                                                        <Badge className={getSeverityColor(flag.severity)}>{flag.severity}</Badge>
+                                                        <span className="font-semibold text-gray-900">{flag.type.replace(/_/g, ' ')}</span>
+                                                        <span className="text-xs text-gray-500">• {formatTimestamp(flag.timestamp)}</span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-700">{flag.description}</p>
+                                                </div>
+                                                {flag.evidence_image && (
+                                                    <div className="flex-shrink-0">
+                                                        <Button size="sm" variant="outline" onClick={() => {
+                                                            const win = window.open();
+                                                            win.document.write(`<div style="display:flex;justify-content:center;align-items:center;height:100vh;background:#000;"><img src="${flag.evidence_image}" style="max-width:90%;max-height:90%;border:2px solid white;"/></div>`);
+                                                        }}>
+                                                            <Eye className="w-4 h-4 mr-2" />
+                                                            View Evidence
+                                                        </Button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </div>
+                ) : (
+                  /* Live Monitoring View (Existing) */
+                  <div className="space-y-6">
                   {/* Live Video Feed */}
                   <Card>
                     <CardHeader>
@@ -737,9 +976,15 @@ const ProctorDashboard = () => {
                     <CardContent>
                       <div className="bg-gray-900 rounded-lg aspect-video flex items-center justify-center">
                         <div className="text-center text-gray-400">
-                          <Camera className="w-16 h-16 mx-auto mb-4" />
-                          <p>Live webcam feed would appear here</p>
-                          <p className="text-sm">{selectedStudent.name}</p>
+                          {liveFeed.webcam ? (
+                              <img src={liveFeed.webcam.startsWith('data:') ? liveFeed.webcam : `data:image/jpeg;base64,${liveFeed.webcam}`} alt="Live Webcam" className="w-full h-full object-contain rounded-lg"/>
+                          ) : (
+                              <>
+                                <Camera className="w-16 h-16 mx-auto mb-4" />
+                                <p>Waiting for live feed...</p>
+                              </>
+                          )}
+                          {!liveFeed.webcam && <p className="text-sm">{selectedStudent.name}</p>}
                         </div>
                       </div>
                     </CardContent>
@@ -756,13 +1001,21 @@ const ProctorDashboard = () => {
                     <CardContent>
                       <div className="bg-gray-100 rounded-lg aspect-video flex items-center justify-center">
                         <div className="text-center text-gray-500">
-                          <Monitor className="w-16 h-16 mx-auto mb-4" />
-                          <p>Screen sharing feed would appear here</p>
-                          <p className="text-sm">Exam Interface</p>
+                          {liveFeed.screen ? (
+                              <img src={liveFeed.screen.startsWith('data:') ? liveFeed.screen : `data:image/jpeg;base64,${liveFeed.screen}`} alt="Live Screen" className="w-full h-full object-contain rounded-lg"/>
+                          ) : (
+                              <>
+                                <Monitor className="w-16 h-16 mx-auto mb-4" />
+                                <p>Waiting for screen feed...</p>
+                              </>
+                          )}
+                          {!liveFeed.screen && <p className="text-sm">Exam Interface</p>}
                         </div>
                       </div>
                     </CardContent>
                   </Card>
+                  </div>
+                )}
                 </div>
 
                 <div className="space-y-6">
@@ -833,7 +1086,7 @@ const ProctorDashboard = () => {
                       </div>
                       <div className="flex justify-between items-center">
                         <span className="text-gray-600">Last Activity</span>
-                        <span className="text-sm">{formatTime(selectedStudent.lastActivity)}</span>
+                        <span className="text-sm">{formatTimestamp(selectedStudent.lastActivity)}</span>
                       </div>
                     </CardContent>
                   </Card>

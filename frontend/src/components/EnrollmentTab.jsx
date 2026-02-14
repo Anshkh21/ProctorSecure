@@ -321,7 +321,7 @@ export const EnrollmentTab = ({  exams, token, toast }) => {
                     <div className="space-y-2 max-h-[400px] overflow-y-auto">
                       {enrollments.map((enrollment) => (
                         <div 
-                          key={enrollment.id}
+                          key={enrollment.id || enrollment.enrollment_id || enrollment.student_id}
                           className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
                         >
                           <div className="flex items-center gap-3">

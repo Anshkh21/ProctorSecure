@@ -5,9 +5,11 @@ import { Badge } from './ui/badge';
 import { useNavigate } from 'react-router-dom';
 import { Calendar, Clock, BookOpen, AlertCircle, Play, User, LogOut } from 'lucide-react';
 import { useToast } from '../hooks/use-toast';
+import GuideDialog from './GuideDialog';
+import SystemCheckDialog from './SystemCheckDialog';
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 const API = `${BACKEND_URL}/api`;
 
 const StudentDashboard = () => {
@@ -75,7 +77,7 @@ const StudentDashboard = () => {
       });
       
       // Start exam session
-      await axios.post(`${API}/session/start?exam_id=${examId}`, {}, {
+      await axios.post(`${API}/session/start`, { exam_id: examId }, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -113,10 +115,29 @@ const StudentDashboard = () => {
   };
 
   const formatDateTime = (dateString) => {
+    if (!dateString) return 'N/A';
     // Ensure UTC interpretation for backend strings
-    const dateStr = dateString.endsWith('Z') ? dateString : dateString + 'Z';
+    const dateStr = typeof dateString === 'string' && dateString.endsWith('Z') ? dateString : dateString + 'Z';
     const date = new Date(dateStr);
     return date.toLocaleDateString() + ' at ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  const isExamUpcoming = (exam) => {
+    if (exam.status !== 'scheduled') return false;
+    
+    // Ensure UTC interpretation
+    let dateStr = exam.scheduled_at;
+    if (typeof dateStr === 'string' && !dateStr.endsWith('Z')) {
+        dateStr += 'Z';
+    }
+    
+    const now = new Date();
+    const scheduledTime = new Date(dateStr);
+    const windowEndTime = new Date(scheduledTime.getTime() + 10 * 60000); // 10 minutes later
+
+    // Upcoming means scheduled in the future OR currently in the 10-minute window
+    // But if it's PAST the window, it's not upcoming, it's missed/closed
+    return now <= windowEndTime;
   };
 
   if (isLoading) {
@@ -168,7 +189,7 @@ const StudentDashboard = () => {
                   Welcome back, {user?.name?.split(' ')[0]}!
                 </h2>
                 <p className="text-gray-600">
-                  You have {exams.filter(e => e.status === 'scheduled').length} upcoming exams
+                  You have {exams.filter(isExamUpcoming).length} upcoming exam{exams.filter(isExamUpcoming).length !== 1 ? 's' : ''}
                 </p>
               </div>
               <div className="hidden md:block">
@@ -193,9 +214,11 @@ const StudentDashboard = () => {
                     Ensure your webcam and microphone are working properly before starting any exam.
                   </p>
                 </div>
-                <Button variant="outline" className="ml-auto border-amber-300 text-amber-700 hover:bg-amber-100">
-                  Test System
-                </Button>
+                <SystemCheckDialog>
+                  <Button variant="outline" className="ml-auto border-amber-300 text-amber-700 hover:bg-amber-100">
+                    Test System
+                  </Button>
+                </SystemCheckDialog>
               </div>
             </CardContent>
           </Card>
@@ -267,7 +290,10 @@ const StudentDashboard = () => {
                       {(() => {
                         const now = new Date();
                         // Ensure naive UTC strings from backend are treated as UTC
-                        const dateStr = exam.scheduled_at.endsWith('Z') ? exam.scheduled_at : exam.scheduled_at + 'Z';
+                        let dateStr = exam.scheduled_at;
+                        if (typeof dateStr === 'string' && !dateStr.endsWith('Z')) {
+                            dateStr += 'Z';
+                        }
                         const scheduledTime = new Date(dateStr);
                         const windowEndTime = new Date(scheduledTime.getTime() + 10 * 60000); // 10 minutes later
 
@@ -344,9 +370,11 @@ const StudentDashboard = () => {
                     Check our comprehensive guide on exam preparation and system requirements.
                   </p>
                 </div>
-                <Button variant="secondary" className="bg-white text-indigo-600 hover:bg-gray-100">
-                  View Guide
-                </Button>
+                <GuideDialog>
+                  <Button variant="secondary" className="bg-white text-indigo-600 hover:bg-gray-100">
+                    View Guide
+                  </Button>
+                </GuideDialog>
               </div>
             </CardContent>
           </Card>

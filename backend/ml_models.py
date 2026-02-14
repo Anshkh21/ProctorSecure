@@ -53,32 +53,42 @@ else:
 class ProctoringModel:
     # ... (existing init) ...
     def __init__(self):
-        self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            max_num_faces=2,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
-        
+        # Try to initialize MediaPipe Face Mesh
+        self.mp_face_mesh = None
+        self.face_mesh = None
+        try:
+            self.mp_face_mesh = mp.solutions.face_mesh
+            self.face_mesh = self.mp_face_mesh.FaceMesh(
+                max_num_faces=2,
+                refine_landmarks=True,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            print("✅ MediaPipe Face Mesh initialized")
+        except Exception as e:
+            print(f"⚠️ MediaPipe Face Mesh initialization failed: {e}")
+            self.face_mesh = None
+
         # Try MediaPipe face detection, fallback to OpenCV if it fails
         self.face_detection = None
         self.face_detection_method = None
         
-        # Force OpenCV fallback due to protobuf compatibility issues
-        use_opencv_fallback = True
+        # Default to trying MediaPipe
+        use_opencv_fallback = False
         
-        if not use_opencv_fallback:
-            try:
+        try:
+            if hasattr(mp, 'solutions') and hasattr(mp.solutions, 'face_detection'):
                 self.mp_face_detection = mp.solutions.face_detection
                 self.face_detection = self.mp_face_detection.FaceDetection(
                     min_detection_confidence=0.5
                 )
                 self.face_detection_method = "mediapipe"
                 print("✅ MediaPipe face detection initialized")
-            except Exception as e:
-                print(f"⚠️ MediaPipe face detection failed: {e}")
-                use_opencv_fallback = True
+            else:
+                raise ImportError("mediapipe.solutions not found")
+        except Exception as e:
+            print(f"⚠️ MediaPipe face detection initialization failed: {e}")
+            use_opencv_fallback = True
         
         if use_opencv_fallback:
             print("   Using OpenCV Haar Cascade for face detection...")
@@ -136,7 +146,36 @@ class ProctoringModel:
         except Exception as e:
             print(f"Error in verify_identity: {e}")
             return False
-        return False
+
+        
+    def verify_face_match(self, img1: np.ndarray, img2: np.ndarray) -> Dict[str, Any]:
+        if DeepFace is None:
+            return {"verified": False, "message": "DeepFace library not installed"}
+            
+        try:
+            # Use opencv detector backend if mediapipe is broken
+            detector = "mediapipe" if self.face_detection_method == "mediapipe" else "opencv"
+            
+            result = DeepFace.verify(
+                img1_path=img1,
+                img2_path=img2,
+                model_name="VGG-Face",
+                detector_backend=detector, 
+                distance_metric="cosine",
+                enforce_detection=False # Tolerant to alignment issues
+            )
+            
+            return {
+                "verified": result["verified"],
+                "distance": result["distance"],
+                "message": "Match found" if result["verified"] else "Face does not match ID card"
+            }
+        except Exception as e:
+            print(f"DeepFace Verification Error: {e}")
+            return {
+                "verified": False,
+                "message": f"Verification error: {str(e)}"
+            }
         
     def extract_text_from_image(self, image_np: np.ndarray) -> str:
         """Extract text from ID card image using OCR"""
@@ -262,17 +301,33 @@ class ProctoringModel:
 
         # 1. Face Detection (Count/Presence)
         image_rgb = cv2.cvtColor(image_np, cv2.COLOR_BGR2RGB)
-        fd_results = self.face_detection.process(image_rgb)
         
-        if fd_results.detections:
-            results["face_count"] = len(fd_results.detections)
-            for detection in fd_results.detections:
-                bboxC = detection.location_data.relative_bounding_box
+        if self.face_detection_method == "mediapipe" and self.face_detection:
+            try:
+                fd_results = self.face_detection.process(image_rgb)
+                if fd_results.detections:
+                    results["face_count"] = len(fd_results.detections)
+                    for detection in fd_results.detections:
+                        bboxC = detection.location_data.relative_bounding_box
+                        results["face_locations"].append({
+                            "x": int(bboxC.xmin * w),
+                            "y": int(bboxC.ymin * h),
+                            "width": int(bboxC.width * w),
+                            "height": int(bboxC.height * h)
+                        })
+            except Exception as e:
+                print(f"MediaPipe inference error: {e}")
+        
+        elif self.face_detection_method == "opencv":
+            gray_frame = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+            faces = self.face_cascade.detectMultiScale(gray_frame, 1.1, 4)
+            results["face_count"] = len(faces)
+            for (x, y, fw, fh) in faces:
                 results["face_locations"].append({
-                    "x": int(bboxC.xmin * w),
-                    "y": int(bboxC.ymin * h),
-                    "width": int(bboxC.width * w),
-                    "height": int(bboxC.height * h)
+                    "x": int(x),
+                    "y": int(y),
+                    "width": int(fw),
+                    "height": int(fh)
                 })
         
         if results["face_count"] == 0:
@@ -282,7 +337,13 @@ class ProctoringModel:
         if results["face_count"] > 1:
             results["warnings"].append("Multiple faces detected")
 
+
+
         # 2. Face Mesh (Gaze, Head Pose, Mouth, Eyes)
+        # Skip if face mesh not initialized
+        if self.face_mesh is None:
+             return results
+
         fm_results = self.face_mesh.process(image_rgb)
         
         if fm_results.multi_face_landmarks:
@@ -319,6 +380,9 @@ class ProctoringModel:
 
             x_angle = angles[0] * 360
             y_angle = angles[1] * 360
+            
+            results["x_angle"] = float(x_angle)
+            results["y_angle"] = float(y_angle)
             
             if y_angle < -15:
                 results["head_pose"] = "left"
@@ -383,14 +447,8 @@ class ProctoringModel:
                    results["gaze_direction"] = "left" # Mirrored
                    if "Looking left" not in results["warnings"]:
                        results["warnings"].append("Gaze deviation: looking left")
-
+        
         return results
-
-    def verify_identity(self, current_face_img: np.ndarray, reference_face_encoding: Any) -> bool:
-        fd_results = self.face_detection.process(cv2.cvtColor(current_face_img, cv2.COLOR_BGR2RGB))
-        if fd_results.detections and len(fd_results.detections) == 1:
-            return True
-        return False
 
     def enhanced_analyze_frame(self, image_np: np.ndarray) -> Dict[str, Any]:
         """
@@ -451,8 +509,8 @@ class ProctoringModel:
                 
                 # Prepare gaze analysis data  
                 gaze_analysis = {
-                    "x_angle": 0,  # Extract from basic_results if available
-                    "y_angle": 0,
+                    "x_angle": basic_results.get("x_angle", 0),  
+                    "y_angle": basic_results.get("y_angle", 0),
                     "warnings": basic_results.get("warnings", [])
                 }
                 

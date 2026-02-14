@@ -19,6 +19,7 @@ function App() {
           <Route path="/" element={<LandingPage />} />
           <Route path="/register" element={<Register />} />
           <Route path="/student" element={<StudentDashboard />} />
+          <Route path="/student/dashboard" element={<StudentDashboard />} />
           <Route path="/exam/:examId" element={<ExamInterface />} />
           <Route path="/verify" element={<IdentityVerification />} />
           <Route path="/proctor" element={<ProctorDashboard />} />

@@ -7,7 +7,6 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Clock, Camera, AlertTriangle, Flag, Send, ChevronLeft, ChevronRight } from 'lucide-react';
-import { mockQuestions, mockExamSession, mockExams } from '../mock';
 import { useToast } from '../hooks/use-toast';
 import axios from 'axios'; // Import axios
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
@@ -17,9 +16,23 @@ import AnomalyScoreDisplay from './AnomalyScoreDisplay'; // [NEW] Anomaly Score 
 
 const ExamInterface = () => {
   const { examId } = useParams();
+  
+  // Helper to format seconds into MM:SS
+  // Helper to format seconds into HH:MM:SS or MM:SS
+  const formatTime = (seconds) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    
+    if (h > 0) {
+      return `${h}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+    return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [answers, setAnswers] = useState({});
-  const [timeRemaining, setTimeRemaining] = useState(7200); // 2 hours in seconds
+  const [timeRemaining, setTimeRemaining] = useState(null); // Initialize as null, set on start
   const [webcamStatus, setWebcamStatus] = useState('active');
   const [isFullscreen, setIsFullscreen] = useState(true);
   const [flaggedQuestions, setFlaggedQuestions] = useState(new Set());
@@ -29,18 +42,103 @@ const ExamInterface = () => {
   const clientWarningsRef = useRef([]); // [NEW] Buffer for warnings
   const videoRef = useRef(null);
   const screenVideoRef = useRef(null); // Ref for screen capture
+  const webcamStreamRef = useRef(null); // [NEW] Ref to hold stream before video mount
+  const screenStreamRef = useRef(null); // [NEW] Ref to hold screen stream
   const audioContextRef = useRef(null); // Ref for audio analysis
   const navigate = useNavigate();
   const { toast } = useToast();
   
   // Calculate answered count
   const answeredCount = Object.keys(answers).length;
+  const progress = questionsList.length > 0 ? (answeredCount / questionsList.length) * 100 : 0;
+
+  const handleAnswerChange = (questionId, value) => {
+    setAnswers(prev => ({
+      ...prev,
+      [questionId]: value
+    }));
+  };
+
+  const handleFlagQuestion = (questionId) => {
+    setFlaggedQuestions(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(questionId)) {
+        newSet.delete(questionId);
+      } else {
+        newSet.add(questionId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSubmitExam = async () => {
+      try {
+          const token = localStorage.getItem('token');
+          let sessionId = localStorage.getItem('examSessionId');
+
+          // [Robustness] Lazy Create Session if missing (e.g. user started before fix)
+          if (!sessionId) {
+              console.warn("Session ID missing at submission. Attempting lazy creation...");
+              try {
+                  const startRes = await axios.post(`${API_URL}/session/start`, {
+                      exam_id: examId
+                  }, {
+                      headers: { Authorization: `Bearer ${token}` }
+                  });
+                  if (startRes.data.session_id) {
+                      sessionId = startRes.data.session_id;
+                      localStorage.setItem('examSessionId', sessionId);
+                  }
+              } catch (startErr) {
+                  console.error("Lazy session creation failed:", startErr);
+              }
+          }
+
+          if (!sessionId) {
+              toast({
+                  title: "Submission Error",
+                  description: "Could not establish exam session. Please contact support.",
+                  variant: "destructive"
+              });
+              return;
+          }
+          
+          await axios.post(`${API_URL}/session/${sessionId}/submit`, {
+              answers: answers,
+              ended_at: new Date().toISOString()
+          }, {
+              headers: { Authorization: `Bearer ${token}` }
+          });
+
+          toast({
+              title: "Exam Submitted",
+              description: "Your responses have been recorded.",
+              className: "bg-green-500 text-white"
+          });
+          
+          if (document.fullscreenElement) {
+              await document.exitFullscreen();
+          }
+          navigate('/student/dashboard');
+
+      } catch (error) {
+          console.error("Submission failed", error);
+          toast({ 
+              title: "Submission Error", 
+              description: "Failed to submit exam. Please try again or contact support.", 
+              variant: "destructive" 
+          });
+      }
+  };
 
   // [NEW] Load TensorFlow Model
   useEffect(() => {
      loadModel().then(success => setModelLoaded(success));
   }, []);
   
+  const [exam, setExam] = useState(null); // Load from API
+  const [hasStarted, setHasStarted] = useState(false); // New state for start button
+
   // Anti-Cheat: Disable Copy/Paste and Context Menu
   useEffect(() => {
      const preventDefault = (e) => e.preventDefault();
@@ -67,31 +165,58 @@ const ExamInterface = () => {
      };
   }, []);
 
-  const exam = mockExams.find(e => e.id === examId);
-  const questions = mockQuestions.filter(q => q.examId === examId);
-
+  // Fetch Data (Questions AND Metadata)
   useEffect(() => {
-    // [NEW] Fullscreen Listener
+    const fetchExamData = async () => {
+       try {
+          const token = localStorage.getItem('token');
+          
+          // 1. Fetch all exams to find the current one (since we don't have a single exam endpoint yet)
+          const resExams = await axios.get(`${API_URL}/exams`, {
+             headers: { Authorization: `Bearer ${token}` }
+          });
+          const foundExam = resExams.data.find(e => e.id === examId);
+          if (foundExam) {
+             setExam(foundExam);
+          } else {
+             console.error("Exam not found in list");
+          }
+
+          // 2. Fetch Questions
+          const resQuestions = await axios.get(`${API_URL}/exams/${examId}/questions`, {
+             headers: { Authorization: `Bearer ${token}` }
+          });
+          setQuestionsList(resQuestions.data);
+
+       } catch (error) {
+          console.error("Failed to load exam data", error);
+          toast({ title: "Error", description: "Failed to load exam data", variant: "destructive" });
+       }
+    };
+
+    if (examId) {
+        fetchExamData();
+    }
+  }, [examId]);
+
+  // Monitoring and Fullscreen (Active only after start)
+  useEffect(() => {
+    if (!hasStarted) return;
+
+    // Fullscreen Listener
     const handleFullScreenChange = () => {
        const isFull = !!document.fullscreenElement;
        setIsFullscreen(isFull);
+       setIsFullscreen(isFull);
        if (!isFull) {
+           // Grace period check: Don't flag in first 5 seconds of exam
+           // (Implementing via simple timestamp check or ref)
            clientWarningsRef.current.push("Exited Fullscreen");
        }
     };
     document.addEventListener('fullscreenchange', handleFullScreenChange);
 
-    // Force Full Screen
-    const enterFullScreen = async () => {
-        try {
-            if (document.documentElement.requestFullscreen) {
-                await document.documentElement.requestFullscreen();
-            }
-        } catch (err) {
-            console.error("Full screen denied:", err);
-        }
-    };
-    enterFullScreen();
+    // Initial Fullscreen Request is handled by the Start button now
 
     // Tab Switching / Focus Loss
     const handleVisibilityChange = () => {
@@ -107,32 +232,9 @@ const ExamInterface = () => {
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    // Initialize webcam and screen share
+    // Initialize monitoring
     initializeMonitoring();
-    
-    // Start Audio Monitoring
     initializeAudioMonitoring();
-    
-    // Fetch Exam Data
-    const fetchExamData = async () => {
-       try {
-          const token = localStorage.getItem('token');
-          // 1. Fetch Exam Details
-          // In a real app, this endpoint would return the exam meta data
-          // const resMeta = await axios.get(`${API_URL}/exams/${examId}`, ...);
-          // For now, we mock the exam meta but fetch questions
-          
-          const resQuestions = await axios.get(`${API_URL}/exams/${examId}/questions`, {
-             headers: { Authorization: `Bearer ${token}` }
-          });
-          setQuestionsList(resQuestions.data);
-       } catch (error) {
-          console.error("Failed to load exam data", error);
-          toast({ title: "Error", description: "Failed to load questions", variant: "destructive" });
-       }
-    };
-
-    fetchExamData();
     
     // Start timer
     const timer = setInterval(() => {
@@ -150,6 +252,7 @@ const ExamInterface = () => {
       e.preventDefault();
       e.returnValue = 'Are you sure you want to leave the exam?';
     };
+    window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
       clearInterval(timer);
@@ -166,101 +269,188 @@ const ExamInterface = () => {
           audioContextRef.current.close();
       }
     };
-  }, [examId]);
+  }, [examId, hasStarted]);
+
+  const handleStartExam = async () => {
+      try {
+          // 0. Create/Start Session Backend
+          const token = localStorage.getItem('token');
+          const res = await axios.post(`${API_URL}/session/start`, {
+              exam_id: examId
+          }, {
+              headers: { Authorization: `Bearer ${token}` }
+          });
+          
+          
+          if (res.data.session_id) {
+              console.log("Exam Session Started/Resumed:", res.data.session_id);
+              localStorage.setItem('examSessionId', res.data.session_id);
+              
+              // Initialize Timer from Server Data (New Start or Resume)
+              if (res.data.start_time && res.data.duration) {
+                  // FORCE UTC: unexpected behavior if server sends naive string and browser implies local
+                  const timeStr = res.data.start_time.endsWith('Z') ? res.data.start_time : res.data.start_time + 'Z';
+                  const startTime = new Date(timeStr);
+                  const now = new Date();
+                  const elapsedSeconds = Math.floor((now - startTime) / 1000);
+                  const totalSeconds = res.data.duration * 60;
+                  
+                  // If clock skew makes elapsed negative, treat as 0
+                  const adjustedElapsed = Math.max(0, elapsedSeconds);
+                  const remaining = Math.max(0, totalSeconds - adjustedElapsed);
+                  
+                  setTimeRemaining(remaining);
+              } else if (exam && exam.duration) {
+                  // Fallback if server doesn't return times (shouldn't happen with fix)
+                  setTimeRemaining(exam.duration * 60);
+              }
+          } else {
+              throw new Error("No session ID returned from server");
+          }
+          
+          // 1. Request Screen Share FIRST
+          await initializeMonitoring();
+          await initializeAudioMonitoring();
+
+          // 2. Request Fullscreen
+          // 2. Request Fullscreen
+          if (document.documentElement.requestFullscreen) {
+              await document.documentElement.requestFullscreen();
+              
+              // Double check if it actually worked (browser might deny without enough user interaction)
+              // Give it a tiny delay to register
+              await new Promise(r => setTimeout(r, 100));
+              if (!document.fullscreenElement) {
+                   console.warn("Fullscreen request apparently succeeded but element is null.");
+                   // Don't block, but warn user via the overlay that will appear immediately
+              }
+          }
+          
+          // 3. Start Exam State
+          setHasStarted(true);
+
+      } catch (err) {
+          console.error("Start exam failed:", err);
+          toast({ 
+              title: "Setup Failed", 
+              description: "Could not start exam session. Please try again.",
+              variant: "destructive" 
+          });
+      }
+  };
+
+  const [audioContext, setAudioContext] = useState(null);
 
   const initializeAudioMonitoring = async () => {
       try {
+          if (audioContextRef.current) return;
+
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-          const analyser = audioContextRef.current.createAnalyser();
-          const microphone = audioContextRef.current.createMediaStreamSource(stream);
-          const scriptProcessor = audioContextRef.current.createScriptProcessor(2048, 1, 1);
+          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          audioContextRef.current = audioCtx;
+          setAudioContext(audioCtx);
 
-          analyser.smoothingTimeConstant = 0.8;
-          analyser.fftSize = 1024;
+          const source = audioCtx.createMediaStreamSource(stream);
+          const analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 256;
+          source.connect(analyser);
 
-          microphone.connect(analyser);
-          analyser.connect(scriptProcessor);
-          scriptProcessor.connect(audioContextRef.current.destination);
-          
-          let consecutiveLoudFrames = 0;
+          const bufferLength = analyser.frequencyBinCount;
+          const dataArray = new Uint8Array(bufferLength);
 
-          scriptProcessor.onaudioprocess = () => {
-              const array = new Uint8Array(analyser.frequencyBinCount);
-              analyser.getByteFrequencyData(array);
+          const checkAudio = () => {
+              if (!audioContextRef.current) return;
               
-              let values = 0;
-              const length = array.length;
-              for (let i = 0; i < length; i++) {
-                  values += array[i];
+              analyser.getByteFrequencyData(dataArray);
+              let sum = 0;
+              for (let i = 0; i < bufferLength; i++) {
+                  sum += dataArray[i];
               }
-              const average = values / length;
+              const average = sum / bufferLength;
 
-              // Threshold for loud noise
-              if (average > 30) { 
-                  consecutiveLoudFrames++;
-                  if (consecutiveLoudFrames > 50) { 
-                      console.log("Audio violation detected: Loud noise");
-                      // Add to buffer, avoid spamming duplicates excessively
-                      if (clientWarningsRef.current && !clientWarningsRef.current.includes("Audio: High Volume")) {
+              if (average > 50) { // Threshold
+                  // console.warn("Loud noise detected");
+                   if (clientWarningsRef.current && !clientWarningsRef.current.includes("Audio: High Volume")) {
                           clientWarningsRef.current.push("Audio: High Volume");
-                      }
-                      consecutiveLoudFrames = 0; 
-                  }
-              } else {
-                  consecutiveLoudFrames = 0;
+                   }
               }
+              
+              requestAnimationFrame(checkAudio);
           };
+
+          checkAudio();
+
       } catch (err) {
           console.error("Audio monitoring failed:", err);
+          // Don't block exam if audio fails, just warn
+          toast({
+                title: "Audio Warning",
+                description: "Could not access microphone. continuing without audio monitoring.",
+                variant: "warning"
+          });
       }
   };
 
   const initializeMonitoring = async () => {
     try {
       // 1. Webcam Stream
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+      if (!webcamStreamRef.current) {
+         try {
+             const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+             webcamStreamRef.current = stream;
+         } catch (e) {
+             console.error("Webcam access denied", e);
+             throw e;
+         }
+      }
+      
+      // Attach to video element if available
+      if (videoRef.current && webcamStreamRef.current) {
+          videoRef.current.srcObject = webcamStreamRef.current;
       }
       
       // 2. Screen Share (Required)
-      try {
-         const screenStream = await navigator.mediaDevices.getDisplayMedia({ 
-            video: { cursor: "always" }, 
-            audio: false 
-         });
+      if (!screenStreamRef.current) {
+         try {
+             const screenStream = await navigator.mediaDevices.getDisplayMedia({ 
+                video: { 
+                    cursor: "always",
+                    displaySurface: "browser" 
+                }, 
+                audio: false,
+                selfBrowserSurface: "include", 
+                systemAudio: "exclude",
+                surfaceSwitching: "include",
+                monitorTypeSurfaces: "exclude" 
+             });
+             screenStreamRef.current = screenStream;
 
-         if (screenVideoRef.current) {
-            screenVideoRef.current.srcObject = screenStream;
+             screenStream.getVideoTracks()[0].onended = () => {
+                // Determine if this was an intentional stop or accidental
+                // For now, treat as accidental/violation unless exam is submitted
+                console.log("Screen share ended by user");
+                 toast({
+                   title: "Screen Share Ended",
+                   description: "You stopped screen sharing. Please re-enable it to continue.",
+                   variant: "destructive"
+                });
+                // Do NOT auto-submit. Just warn.
+             };
+         } catch (e) {
+             console.error("Screen share access denied", e);
+             throw e;
          }
-         
-         screenStream.getVideoTracks()[0].onended = () => {
-            toast({
-               title: "Screen Share Ended",
-               description: "You stopped screen sharing. PLEASE RE-ENABLE IT immediately to continue.",
-               variant: "destructive"
-            });
-            setWebcamStatus('error');
-         };
-         
-      } catch (screenErr) {
-         console.error("Screen share denied:", screenErr);
-         toast({ 
-            title: "Screen Share Required", 
-            description: "You must share your entire screen to take this exam.",
-            variant: "destructive"
-         });
+      }
+
+      // Attach to screen video element if available
+      if (screenVideoRef.current && screenStreamRef.current) {
+         screenVideoRef.current.srcObject = screenStreamRef.current;
       }
 
     } catch (err) {
-      console.error("Error accessing camera:", err);
-      setWebcamStatus('error');
-      toast({
-        title: "Camera Error",
-        description: "Could not access webcam. Please check permissions.",
-        variant: "destructive"
-      });
+      console.error("Error accessing camera/screen:", err);
+      // Propagate error to handleStartExam
+      throw err;
     }
   };
 
@@ -288,7 +478,23 @@ const ExamInterface = () => {
                 screenImage = sCanvas.toDataURL('image/jpeg', 0.5);
             }
 
-            const sessionId = localStorage.getItem('examSessionId') || 'session_1'; 
+
+            // Retrieve fresh sessionId and token in every loop iteration
+            const currentSessionId = localStorage.getItem('examSessionId');
+            const currentToken = localStorage.getItem('token'); 
+
+            if (!currentSessionId || !currentToken) return; 
+
+            // [NEW] Fetch Flags for Student Transparency
+            let currentFlags = [];
+            try {
+                const flagRes = await axios.get(`${API_URL}/student/session/${currentSessionId}/flags`, {
+                    headers: { Authorization: `Bearer ${currentToken}` }
+                });
+                currentFlags = flagRes.data;
+            } catch (flagErr) {
+                console.warn("Failed to fetch flags:", flagErr);
+            }
             
             // [NEW] Object Detection
             if (modelLoaded && videoRef.current) {
@@ -314,17 +520,20 @@ const ExamInterface = () => {
             clientWarningsRef.current = []; // Clear buffer
 
             // [UPDATED] Use Enhanced Analysis Endpoint
-            await axios.post(`${API_URL}/session/${sessionId}/analyze-enhanced`, {
+            await axios.post(`${API_URL}/session/${currentSessionId}/analyze-enhanced`, {
                 image_data: webcamImage,
                 screen_data: screenImage,
                 client_warnings: warningsToSend,
                 timestamp: new Date().toISOString()
             }, {
-                headers: { Authorization: `Bearer ${token}` }
+                headers: { Authorization: `Bearer ${currentToken}` }
             }).then(res => {
                 // Update Analysis Result State
                 if (res.data.analysis) {
-                    setAnalysisResult(res.data.analysis);
+                    setAnalysisResult({
+                        ...res.data.analysis,
+                        flags: currentFlags // Attach fetched flags
+                    });
                 }
 
                 // Handle Warnings (merged from backend)
@@ -347,7 +556,7 @@ const ExamInterface = () => {
     }, 5000); 
 
     return () => clearInterval(interval);
-  }, []);
+  }, [modelLoaded]);
 
   // Use questionsList from state
   const currentQuestionData = questionsList.length > 0 ? questionsList[currentQuestion] : null;
@@ -362,12 +571,66 @@ const ExamInterface = () => {
       <div className="min-h-screen bg-gray-100 flex items-center justify-center">
         <Card className="w-96">
           <CardContent className="p-8 text-center">
-            <h2 className="text-xl font-semibold mb-4">Exam Not Found</h2>
-            <Button onClick={() => navigate('/student')}>Return to Dashboard</Button>
+            <h2 className="text-xl font-semibold mb-4">Loading Exam...</h2>
+            {/* If it takes too long, it might be 404, but let's give it a moment or user relies on toast error */}
+            <p className="text-gray-500 mb-4">Please wait while we set up your environment.</p>
+            <Button variant="outline" onClick={() => navigate('/student')}>Return to Dashboard</Button>
           </CardContent>
         </Card>
       </div>
     );
+  }
+
+  if (!hasStarted) {
+      return (
+          <div className="min-h-screen bg-gray-100 flex items-center justify-center p-4">
+              <Card className="max-w-2xl w-full shadow-xl">
+                  <CardHeader>
+                      <CardTitle className="text-2xl">Ready to Begin?</CardTitle>
+                      <CardDescription>
+                          {exam.title} • {exam.duration} Minutes • {questionsList.length} Questions
+                      </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                      <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-r">
+                          <div className="flex">
+                              <div className="flex-shrink-0">
+                                  <AlertTriangle className="h-5 w-5 text-amber-400" />
+                              </div>
+                              <div className="ml-3">
+                                  <h3 className="text-sm font-medium text-amber-800">Proctored Exam Session</h3>
+                                  <div className="mt-2 text-sm text-amber-700">
+                                      <p>This exam is monitored. By clicking start, you agree to:</p>
+                                      <ul className="list-disc list-inside mt-1 ml-2">
+                                          <li>Webcam and audio recording</li>
+                                          <li>Screen sharing (required)</li>
+                                          <li>Fullscreen mode enforcement</li>
+                                      </ul>
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                          <h4 className="font-medium text-gray-900">Before you start:</h4>
+                          <ul className="list-disc pl-5 space-y-1 text-gray-600 text-sm">
+                              <li>Ensure you are in a quiet, well-lit room.</li>
+                              <li>Close all other tabs and applications.</li>
+                              <li>Have your ID ready if requested.</li>
+                              <li>Do not leave the exam window once started.</li>
+                          </ul>
+                      </div>
+
+                      <Button 
+                          onClick={handleStartExam} 
+                          className="w-full text-lg py-6 font-bold bg-blue-600 hover:bg-blue-700 shadow-md transition-all transform hover:scale-[1.01]"
+                      >
+                          Start Exam & Enter Fullscreen
+                      </Button>
+                  </CardContent>
+              </Card>
+          </div>
+      );
   }
 
   return (
@@ -413,8 +676,8 @@ const ExamInterface = () => {
             <div className="flex items-center space-x-6">
               <div className="flex items-center space-x-2 text-lg font-mono">
                 <Clock className="w-5 h-5 text-gray-600" />
-                <span className={timeRemaining <= 600 ? 'text-red-600' : 'text-gray-900'}>
-                  {formatTime(timeRemaining)}
+                <span className={(timeRemaining !== null && timeRemaining <= 600) ? 'text-red-600' : 'text-gray-900'}>
+                  {timeRemaining !== null ? formatTime(timeRemaining) : '--:--'}
                 </span>
               </div>
               <Button 
@@ -437,7 +700,7 @@ const ExamInterface = () => {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-lg">
-                    Question {currentQuestion + 1} of {questions.length}
+                    Question {currentQuestion + 1} of {questionsList.length}
                   </CardTitle>
                   <Button 
                     variant="outline" 
@@ -465,7 +728,7 @@ const ExamInterface = () => {
                     onValueChange={(value) => handleAnswerChange(currentQuestionData.id, value)}
                   >
                     <div className="space-y-3">
-                      {currentQuestionData.options.map((option, index) => (
+                      {currentQuestionData.options?.map((option, index) => (
                         <div key={index} className="flex items-center space-x-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50">
                           <RadioGroupItem value={index.toString()} id={`option-${index}`} />
                           <Label 
@@ -508,14 +771,14 @@ const ExamInterface = () => {
               </Button>
               
               <div className="flex space-x-3">
-                {currentQuestion === questions.length - 1 ? (
+                {currentQuestion === questionsList.length - 1 ? (
                   <Button onClick={handleSubmitExam} className="bg-green-600 hover:bg-green-700">
                     <Send className="w-4 h-4 mr-2" />
                     Submit Exam
                   </Button>
                 ) : (
                   <Button 
-                    onClick={() => setCurrentQuestion(Math.min(questions.length - 1, currentQuestion + 1))}
+                    onClick={() => setCurrentQuestion(Math.min(questionsList.length - 1, currentQuestion + 1))}
                   >
                     Next
                     <ChevronRight className="w-4 h-4 ml-2" />
@@ -563,15 +826,15 @@ const ExamInterface = () => {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm">Question Navigator</CardTitle>
                 <p className="text-xs text-gray-600">
-                  {answeredCount} of {questions.length} answered
+                  {answeredCount} of {questionsList.length} answered
                 </p>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-5 gap-2">
-                  {questions.map((_, index) => {
-                    const isAnswered = answers[questions[index].id] !== undefined;
+                  {questionsList.map((_, index) => {
+                    const isAnswered = answers[questionsList[index].id] !== undefined;
                     const isCurrent = index === currentQuestion;
-                    const isFlagged = flaggedQuestions.has(questions[index].id);
+                    const isFlagged = flaggedQuestions.has(questionsList[index].id);
                     
                     return (
                       <button

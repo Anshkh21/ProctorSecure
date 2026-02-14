@@ -142,6 +142,23 @@ const AnomalyScoreDisplay = ({ analysisResult, showDetails = true }) => {
           🚨 PROCTOR ALERT TRIGGERED
         </div>
       )}
+
+      {/* [NEW] Recorded Flags History */}
+      {analysisResult.flags && analysisResult.flags.length > 0 && (
+         <div className="mt-4 border-t pt-3">
+             <h4 className="text-sm font-bold text-gray-800 mb-2">Recorded Violations ({analysisResult.flags.length})</h4>
+             <div className="max-h-32 overflow-y-auto space-y-2 pr-1">
+                 {analysisResult.flags.map((flag, idx) => (
+                     <div key={idx} className="text-xs bg-red-50 border border-red-100 p-2 rounded flex justify-between items-start">
+                         <span>{flag.description || flag.type.replace('_', ' ')}</span>
+                         <span className="text-gray-500 text-[10px] ml-2">
+                             {new Date(flag.timestamp).toLocaleTimeString()}
+                         </span>
+                     </div>
+                 ))}
+             </div>
+         </div>
+      )}
     </div>
   );
 };

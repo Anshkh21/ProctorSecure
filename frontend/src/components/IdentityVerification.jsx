@@ -7,7 +7,7 @@ import { Camera, CheckCircle, AlertCircle, User, Webcam, FileText, ArrowRight, X
 import { useToast } from '../hooks/use-toast';
 import axios from 'axios';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 const API = `${BACKEND_URL}/api`;
 
 const IdentityVerification = () => {
@@ -29,14 +29,15 @@ const IdentityVerification = () => {
   const { toast } = useToast();
   
   const examId = searchParams.get('examId');
-  const totalSteps = 4;
+  const totalSteps = 5;
   const progress = (currentStep / totalSteps) * 100;
 
   const steps = [
     { id: 1, title: "System Check", icon: <Webcam className="w-5 h-5" /> },
     { id: 2, title: "ID Verification", icon: <FileText className="w-5 h-5" /> },
     { id: 3, title: "Face Verification", icon: <User className="w-5 h-5" /> },
-    { id: 4, title: "Final Review", icon: <CheckCircle className="w-5 h-5" /> }
+    { id: 4, title: "Room Scan", icon: <Monitor className="w-5 h-5" /> },
+    { id: 5, title: "Final Review", icon: <CheckCircle className="w-5 h-5" /> }
   ];
 
   useEffect(() => {
@@ -100,19 +101,7 @@ const IdentityVerification = () => {
     initializeWebcam();
   };
 
-  const captureIdImage = async () => {
-    console.log("🔵 CAPTURE BUTTON CLICKED");
-    if (videoRef.current && canvasRef.current) {
-      const canvas = canvasRef.current;
-      const video = videoRef.current;
-      const context = canvas.getContext('2d');
-      
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      context.drawImage(video, 0, 0);
-      
-      const imageData = canvas.toDataURL('image/jpeg', 0.8);
-      console.log("📸 Image captured, length:", imageData.length);
+  const verifyIdImage = async (imageData) => {
       setIsProcessing(true);
       setVerificationDetails(null);
 
@@ -126,11 +115,13 @@ const IdentityVerification = () => {
 
         if (response.data.is_valid) {
           setIdVerified(true); 
+          setIdDocument(imageData);
           toast({
              title: "ID Verified",
              description: response.data.message
           });
         } else {
+          setIdVerified(false);
           toast({
             title: "Verification Failed",
             description: response.data.message,
@@ -139,16 +130,31 @@ const IdentityVerification = () => {
         }
       } catch (error) {
         console.error("ID Verification Error:", error);
-        console.error("Error response:", error.response?.data);
         setVerificationDetails(null);
+        setIdVerified(false);
         toast({
           title: "Error",
-          description: error.response?.data?.detail || "ID verification failed - check console",
+          description: error.response?.data?.detail || "ID verification failed",
           variant: "destructive"
         });
       } finally {
         setIsProcessing(false);
       }
+  };
+
+  const captureIdImage = async () => {
+    console.log("🔵 CAPTURE BUTTON CLICKED");
+    if (videoRef.current && canvasRef.current) {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      const context = canvas.getContext('2d');
+      
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      context.drawImage(video, 0, 0);
+      
+      const imageData = canvas.toDataURL('image/jpeg', 0.8);
+      await verifyIdImage(imageData);
     } else {
       console.error("❌ Missing refs:", { video: !!videoRef.current, canvas: !!canvasRef.current });
       toast({
@@ -195,11 +201,9 @@ const IdentityVerification = () => {
       
       const reader = new FileReader();
       reader.onload = (e) => {
-        setIdDocument(e.target.result);
-        toast({
-          title: "ID Document Uploaded",
-          description: "Document uploaded successfully for verification"
-        });
+        const imageData = e.target.result;
+        setIdDocument(imageData);
+        verifyIdImage(imageData); // Verify immediately on upload
       };
       reader.readAsDataURL(file);
     }
@@ -299,9 +303,10 @@ const IdentityVerification = () => {
   const canProceed = () => {
     switch (currentStep) {
       case 1: return webcamEnabled;
-      case 2: return idDocument !== null;
+      case 2: return idVerified;
       case 3: return faceVerified;
       case 4: return true;
+      case 5: return true;
       default: return false;
     }
   };

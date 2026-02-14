@@ -71,7 +71,7 @@ class ProctorAnalytics:
         try:
             # Update session with anomaly scores
             await  self.db.exam_sessions.update_one(
-                {'session_id': session_id},
+                {'id': session_id},
                 {
                     '$set': {
                         'anomaly_scores': anomaly_scores,
@@ -226,7 +226,7 @@ class ProctorAnalytics:
             Dict with session metrics and statistics
         """
         try:
-            session = await self.db.exam_sessions.find_one({'session_id': session_id})
+            session = await self.db.exam_sessions.find_one({'id': session_id})
             
             if not session:
                 return {'error': 'Session not found'}

@@ -20,9 +20,14 @@ pymongo
 pydantic
 python-jose[cryptography]
 passlib[bcrypt]
-opencv-python
-mediapipe
-numpy
+python-dotenv
+
+opencv-contrib-python
+mediapipe==0.10.14
+protobuf<5.0.0
+numpy<2.0.0
 pillow
 pytesseract
 thefuzz[speedup]
+deepface
+tf-keras

@@ -65,7 +65,7 @@ class ObjectDetector:
                 'S_object': 0.0,
                 'violations': [],
                 'all_detections': [],
-                ' model_status': 'not_loaded'
+                'model_status': 'not_loaded'
             }
         
         try:

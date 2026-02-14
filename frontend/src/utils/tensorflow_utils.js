@@ -28,7 +28,7 @@ export const detectObjects = async (videoElement) => {
   // Prohibited items list (subset of COCO classes)
   const prohibitedItems = [
     'cell phone', 
-    'mobile phone',
+
     'laptop', 
     'book', 
     'notebook',

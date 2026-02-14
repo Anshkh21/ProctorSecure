@@ -10,7 +10,7 @@ import { useToast } from '../hooks/use-toast';
 import axios from 'axios';
 import { ArrowLeft } from 'lucide-react';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000';
 const API = `${BACKEND_URL}/api`;
 
 const CreateExam = () => {
@@ -125,7 +125,7 @@ const CreateExam = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) {
-        navigate('/login');
+        navigate('/');
         return;
       }
 
