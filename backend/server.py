@@ -866,28 +866,39 @@ async def get_proctor_students(proctor: dict = Depends(require_proctor)):
         if student:
             exam = next((e for e in proctor_exams if e["id"] == session["exam_id"]), None)
             
-            # [NEW] Self-Healing: Recalculate score if missing for completed exams
+            # [NEW] Self-Healing: Recalculate score if missing for completed exams OR to apply new grading fix
             score = session.get("score", 0)
             total_points = session.get("total_points", 0)
             percentage = session.get("percentage", 0)
 
-            if session.get("status") == "completed" and (total_points == 0 or "score" not in session):
-                 # Calculate now
+            if session.get("status") == "completed":
+                 # Calculate now to ensure accuracy with new index_to_letter mapping
                  exam_questions = questions_map.get(session["exam_id"], [])
                  if exam_questions:
-                     calc_score = 0
                      calc_total = 0
+                     calc_score = 0
                      student_answers = session.get("answers", {})
+                     
+                     # Map index to letter for grading
+                     index_to_letter = {"0": "a", "1": "b", "2": "c", "3": "d"}
                      
                      for q in exam_questions:
                          points = q.get("points", 1)
                          calc_total += points
                          q_id = q.get("id")
-                         q_id = q.get("id")
                          if q_id in student_answers: 
-                             # Normalize comparison
-                             student_val = str(student_answers[q_id]).strip().lower()
+                             # Normalize comparison securely
+                             raw_ans = student_answers[q_id]
+                             if isinstance(raw_ans, dict):
+                                 student_val = str(raw_ans.get("answer", "")).strip().lower()
+                             else:
+                                 student_val = str(raw_ans).strip().lower()
+                             
                              correct_val = str(q.get("correct_answer")).strip().lower()
+                             
+                             # Map numeric index to letter if necessary
+                             if student_val in index_to_letter:
+                                 student_val = index_to_letter[student_val]
                              
                              if student_val == correct_val:
                                  calc_score += points
@@ -923,7 +934,8 @@ async def get_proctor_students(proctor: dict = Depends(require_proctor)):
                 "last_active": session.get("start_time", datetime.utcnow()).isoformat(),
                 "score": score,
                 "total_points": total_points,
-                "percentage": percentage
+                "percentage": percentage,
+                "end_time": session.get("end_time").isoformat() if session.get("end_time") else None
             })
     
     return result
@@ -1260,13 +1272,17 @@ async def monitor_session(
                     flag_type = "drowsiness"
                     severity = "low"
 
+                evidence = request.image_data
+                if "Audio" in warning or "Talking" in warning or flag_type == "audio_violation":
+                    evidence = None
+
                 flag = ProctoringFlag(
                     student_id=current_user["id"],
                     session_id=session_id,
                     type=flag_type,
                     description=warning,
                     severity=severity,
-                    evidence_image=request.image_data # Save the full base64 string
+                    evidence_image=evidence
                 )
                 await db.proctoring_flags.insert_one(flag.dict())
 
@@ -1374,6 +1390,10 @@ async def analyze_frame_enhanced(
                     flag_type = "drowsiness"
                     severity = "low"
 
+                evidence = request.image_data
+                if "Audio" in warning or "Talking" in warning or flag_type == "audio_violation":
+                    evidence = None
+
                 # Create flag if it's a significant violation
                 # Avoid duplicate low-severity flags if possible, but for now log all
                 flag = ProctoringFlag(
@@ -1382,10 +1402,9 @@ async def analyze_frame_enhanced(
                     type=flag_type,
                     description=warning,
                     severity=severity,
-                    evidence_image=request.image_data
+                    evidence_image=evidence
                 )
                 await db.proctoring_flags.insert_one(flag.dict())
-        
         # Create flags for Research Paper Violations (High Severity)
         if result.get('should_alert'):
             alert_level = result['anomaly_scoring'].get('alert_level', 'MEDIUM')
@@ -1459,6 +1478,9 @@ async def submit_exam(
         total_points = 0
         
         student_answers = submission.get("answers", {})
+        
+        # Map index to letter for grading
+        index_to_letter = {"0": "a", "1": "b", "2": "c", "3": "d"}
 
         for q in questions:
             q_id = q.get("id")
@@ -1469,6 +1491,10 @@ async def submit_exam(
             if q_id in student_answers:
                 student_val = str(student_answers[q_id]).strip().lower()
                 correct_val = str(q.get("correct_answer")).strip().lower()
+                
+                # Map numeric index to letter if necessary
+                if student_val in index_to_letter:
+                    student_val = index_to_letter[student_val]
                 
                 if student_val == correct_val:
                     score += points
@@ -1642,6 +1668,50 @@ async def get_student_session_flags(
     
     return flags
 
+@api_router.post("/proctor/send-message")
+async def send_student_message(
+    data: dict,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] != "proctor":
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    # In a real app this would use WebSockets or push notifications
+    # For now we'll just log it to the database as a system message
+    await db.proctor_messages.insert_one({
+        "student_id": data.get("student_id"),
+        "session_id": data.get("session_id"),
+        "message": data.get("message"),
+        "timestamp": datetime.utcnow(),
+        "read": False
+    })
+    
+    return {"status": "success", "message": "Message sent"}
+
+@api_router.post("/proctor/end-session/{session_id}")
+async def force_end_session(
+    session_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    if current_user["role"] != "proctor":
+        raise HTTPException(status_code=403, detail="Access denied")
+        
+    session = await db.exam_sessions.find_one({"id": session_id})
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+        
+    await db.exam_sessions.update_one(
+        {"id": session_id},
+        {"$set": {
+            "status": "completed",
+            "end_time": datetime.utcnow(),
+            "forced_submission": True,
+            "forced_by": current_user["id"]
+        }}
+    )
+    
+    return {"status": "success", "message": "Session terminated"}
+
 # Legacy routes
 @api_router.get("/")
 async def root():
@@ -1791,6 +1861,211 @@ async def get_system_status():
         "paper_compliance": "90%"
     }
 
+# ============================================================================
+# SYSTEM ACTIONS (DATA RESET)
+# ============================================================================
+
+@api_router.delete("/admin/reset/proctor/{proctor_id}")
+async def reset_proctor_data(
+    proctor_id: str,
+    current_user: dict = Depends(require_admin)
+):
+    """
+    Admin-only: Delete all data (exams, sessions, flags) belonging to a specific proctor.
+    Does NOT delete the proctor's account itself.
+    """
+    try:
+        exams_res = await db.exams.delete_many({"proctor_id": proctor_id})
+        sessions_res = await db.exam_sessions.delete_many({"proctor_id": proctor_id})
+
+        # Flags link to sessions, not directly to proctors
+        proctor_session_ids = [s["id"] for s in (await db.exam_sessions.find({"proctor_id": proctor_id}).to_list(10000))]
+        flags_res = await db.proctoring_flags.delete_many({"session_id": {"$in": proctor_session_ids}})
+
+        return {
+            "message": f"Data for proctor {proctor_id} cleared successfully.",
+            "deleted": {
+                "exams": exams_res.deleted_count,
+                "sessions": sessions_res.deleted_count,
+                "flags": flags_res.deleted_count,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error resetting proctor {proctor_id} data: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reset proctor data: {str(e)}")
+
+@api_router.delete("/proctor/reset/exam/{exam_id}")
+async def reset_exam_records(
+    exam_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Proctor: Delete all sessions and flags for a specific exam they own.
+    Admin: Can delete any exam's records. Proctor: must own the exam.
+    """
+    role = current_user.get("role", "")
+    proctor_id = current_user.get("id")
+
+    if role not in ("admin", "proctor"):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    # Verify exam ownership for proctors
+    exam = await db.exams.find_one({"id": exam_id})
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found.")
+    if role == "proctor" and exam.get("proctor_id") != proctor_id:
+        raise HTTPException(status_code=403, detail="You can only delete records for exams you created.")
+
+    try:
+        # Find sessions for this exam
+        exam_sessions = await db.exam_sessions.find({"exam_id": exam_id}).to_list(10000)
+        session_ids = [s["id"] for s in exam_sessions]
+
+        # Delete flags first (dependent on sessions)
+        flags_res = await db.proctoring_flags.delete_many({"session_id": {"$in": session_ids}})
+        # Delete sessions
+        sessions_res = await db.exam_sessions.delete_many({"exam_id": exam_id})
+
+        return {
+            "message": f"Records for exam '{exam.get('title', exam_id)}' cleared.",
+            "deleted": {
+                "sessions": sessions_res.deleted_count,
+                "flags": flags_res.deleted_count,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error resetting exam {exam_id} records: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed: {str(e)}")
+
+
+@api_router.delete("/proctor/reset/student/{student_id}")
+async def reset_student_records(
+    student_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Proctor: Delete all sessions and flags for a specific student, scoped to sessions
+    the proctor owns. Admin: global scope.
+    """
+    role = current_user.get("role", "")
+    proctor_id = current_user.get("id")
+
+    if role not in ("admin", "proctor"):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    try:
+        if role == "admin":
+            # Admin: delete all sessions and flags for this student globally
+            student_sessions = await db.exam_sessions.find({"student_id": student_id}).to_list(10000)
+        else:
+            # Proctor: only delete sessions they own for this student
+            student_sessions = await db.exam_sessions.find({
+                "student_id": student_id,
+                "proctor_id": proctor_id
+            }).to_list(10000)
+
+        session_ids = [s["id"] for s in student_sessions]
+
+        flags_res = await db.proctoring_flags.delete_many({"session_id": {"$in": session_ids}})
+        sessions_res = await db.exam_sessions.delete_many({"id": {"$in": session_ids}})
+
+        return {
+            "message": f"Records for student {student_id} cleared.",
+            "deleted": {
+                "sessions": sessions_res.deleted_count,
+                "flags": flags_res.deleted_count,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error resetting student {student_id} records: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed: {str(e)}")
+
+@api_router.delete("/admin/reset/{collection_name}")
+async def reset_database_collection(
+    collection_name: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Clear records from a specific collection.
+    - Admins: global unscoped delete (all records).
+    - Proctors: scoped delete (only their own data).
+    """
+    role = current_user.get("role", "")
+    if role not in ("admin", "proctor"):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    is_admin = (role == "admin")
+    proctor_id = current_user.get("id")
+
+    try:
+        if collection_name == "exams":
+            query = {} if is_admin else {"proctor_id": proctor_id}
+            result = await db.exams.delete_many(query)
+            scope = "all exams" if is_admin else "your exams"
+            return {"message": f"Cleared {scope} successfully.", "deleted_count": result.deleted_count}
+
+        elif collection_name == "sessions":
+            query = {} if is_admin else {"proctor_id": proctor_id}
+            result = await db.exam_sessions.delete_many(query)
+            scope = "all sessions" if is_admin else "your sessions"
+            return {"message": f"Cleared {scope} successfully.", "deleted_count": result.deleted_count}
+
+        elif collection_name == "flags":
+            if is_admin:
+                result = await db.proctoring_flags.delete_many({})
+            else:
+                # Flags are not directly tied to proctor_id — find session IDs owned by this proctor first
+                proctor_sessions = await db.exam_sessions.find({"proctor_id": proctor_id}).to_list(10000)
+                proctor_session_ids = [s["id"] for s in proctor_sessions]
+                result = await db.proctoring_flags.delete_many({"session_id": {"$in": proctor_session_ids}})
+            scope = "all flags" if is_admin else "flags from your sessions"
+            return {"message": f"Cleared {scope} successfully.", "deleted_count": result.deleted_count}
+
+        elif collection_name == "students":
+            if not is_admin:
+                raise HTTPException(status_code=403, detail="Only super admins can delete student accounts.")
+            result = await db.users.delete_many({"role": "student"})
+            return {"message": "All student accounts cleared successfully.", "deleted_count": result.deleted_count}
+
+        elif collection_name == "all":
+            if is_admin:
+                # Full factory reset
+                exams_res = await db.exams.delete_many({})
+                sessions_res = await db.exam_sessions.delete_many({})
+                flags_res = await db.proctoring_flags.delete_many({})
+                students_res = await db.users.delete_many({"role": "student"})
+                return {
+                    "message": "Master reset complete.",
+                    "deleted": {
+                        "exams": exams_res.deleted_count,
+                        "sessions": sessions_res.deleted_count,
+                        "flags": flags_res.deleted_count,
+                        "students": students_res.deleted_count
+                    }
+                }
+            else:
+                # Proctor: only their own exams, sessions, and flags
+                exams_res = await db.exams.delete_many({"proctor_id": proctor_id})
+                sessions_res = await db.exam_sessions.delete_many({"proctor_id": proctor_id})
+                proctor_session_ids = [s["id"] for s in (await db.exam_sessions.find({"proctor_id": proctor_id}).to_list(10000))]
+                flags_res = await db.proctoring_flags.delete_many({"session_id": {"$in": proctor_session_ids}})
+                return {
+                    "message": "Your data has been cleared.",
+                    "deleted": {
+                        "exams": exams_res.deleted_count,
+                        "sessions": sessions_res.deleted_count,
+                        "flags": flags_res.deleted_count,
+                    }
+                }
+
+        else:
+            raise HTTPException(status_code=400, detail="Invalid collection target.")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resetting {collection_name}: {e}")
+        raise HTTPException(status_code=500, detail=f"Database reset failed: {str(e)}")
 
 
 

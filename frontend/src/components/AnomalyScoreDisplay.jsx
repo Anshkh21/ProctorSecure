@@ -152,7 +152,7 @@ const AnomalyScoreDisplay = ({ analysisResult, showDetails = true }) => {
                      <div key={idx} className="text-xs bg-red-50 border border-red-100 p-2 rounded flex justify-between items-start">
                          <span>{flag.description || flag.type.replace('_', ' ')}</span>
                          <span className="text-gray-500 text-[10px] ml-2">
-                             {new Date(flag.timestamp).toLocaleTimeString()}
+                             {new Date(flag.timestamp).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata' })}
                          </span>
                      </div>
                  ))}

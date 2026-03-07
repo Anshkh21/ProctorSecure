@@ -119,7 +119,7 @@ const StudentDashboard = () => {
     // Ensure UTC interpretation for backend strings
     const dateStr = typeof dateString === 'string' && dateString.endsWith('Z') ? dateString : dateString + 'Z';
     const date = new Date(dateStr);
-    return date.toLocaleDateString() + ' at ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata' }) + ' at ' + date.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
   };
 
   const isExamUpcoming = (exam) => {

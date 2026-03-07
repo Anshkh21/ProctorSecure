@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { useToast } from '../hooks/use-toast';
-import { Loader2, UserPlus, Users, Trash2, Mail, Building, Copy, Check } from 'lucide-react';
+import { Loader2, UserPlus, Users, Trash2, Mail, Building, Copy, Check, AlertTriangle, Shield, Flag, BookOpen, GraduationCap } from 'lucide-react';
 
 
 const AdminDashboard = () => {
@@ -22,6 +22,31 @@ const AdminDashboard = () => {
   const [submitting, setSubmitting] = useState(false);
   const [tempPassword, setTempPassword] = useState('');
   const [passwordCopied, setPasswordCopied] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
+  const [selectedProctorForReset, setSelectedProctorForReset] = useState('');
+
+  const handleAdminReset = async (collection, label) => {
+    if (!window.confirm(`⚠️ WARNING ⚠️\n\nAre you sure you want to permanently delete all ${label}?\n\nThis action CANNOT be undone.`)) {
+      return;
+    }
+    setIsResetting(true);
+    try {
+      const res = await fetch(`http://localhost:8000/api/admin/reset/${collection}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast({ title: 'Done', description: data.message || `${label} cleared.` });
+      } else {
+        toast({ title: 'Error', description: data.detail || 'Failed.', variant: 'destructive' });
+      }
+    } catch (err) {
+      toast({ title: 'Error', description: 'Network error.', variant: 'destructive' });
+    } finally {
+      setIsResetting(false);
+    }
+  };
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -377,6 +402,173 @@ const AdminDashboard = () => {
             )}
           </CardContent>
         </Card>
+
+        {/* System Actions / Danger Zone */}
+        <div className="mt-10">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Shield className="w-6 h-6 text-red-600" />
+              <h2 className="text-2xl font-bold text-gray-900">System Actions</h2>
+            </div>
+            <span className="bg-red-100 text-red-800 text-xs font-semibold px-3 py-1 rounded-full border border-red-200">
+              Danger Zone
+            </span>
+          </div>
+          <p className="text-sm text-gray-500 mb-6">
+            Permanently remove data from the database. These actions are irreversible. Use with extreme caution.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Exams */}
+            <Card className="border-orange-200 bg-orange-50/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center text-orange-800 text-base">
+                  <BookOpen className="w-4 h-4 mr-2" />
+                  Clear All Exams
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-600 mb-3">Delete all created exams and their questions from the system.</p>
+                <Button variant="outline" className="w-full border-orange-300 text-orange-700 hover:bg-orange-100" disabled={isResetting}
+                  onClick={() => handleAdminReset('exams', 'exams')}>
+                  Delete All Exams
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Sessions */}
+            <Card className="border-orange-200 bg-orange-50/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center text-orange-800 text-base">
+                  <Users className="w-4 h-4 mr-2" />
+                  Clear All Sessions
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-600 mb-3">Delete all exam sessions, student attempts, and scores.</p>
+                <Button variant="outline" className="w-full border-orange-300 text-orange-700 hover:bg-orange-100" disabled={isResetting}
+                  onClick={() => handleAdminReset('sessions', 'exam sessions')}>
+                  Delete All Sessions
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Flags */}
+            <Card className="border-orange-200 bg-orange-50/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center text-orange-800 text-base">
+                  <Flag className="w-4 h-4 mr-2" />
+                  Clear All Flags
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-600 mb-3">Delete all proctoring flags, incidents, and photo evidence.</p>
+                <Button variant="outline" className="w-full border-orange-300 text-orange-700 hover:bg-orange-100" disabled={isResetting}
+                  onClick={() => handleAdminReset('flags', 'proctoring flags')}>
+                  Delete All Flags
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Students */}
+            <Card className="border-red-200 bg-red-50/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center text-red-800 text-base">
+                  <GraduationCap className="w-4 h-4 mr-2" />
+                  Clear All Students
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-600 mb-3">Delete all student accounts. Admin and Proctor accounts are NOT affected.</p>
+                <Button variant="destructive" className="w-full bg-red-600 hover:bg-red-700" disabled={isResetting}
+                  onClick={() => handleAdminReset('students', 'student accounts')}>
+                  Delete All Students
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Per-Proctor Data Delete — full width */}
+            <Card className="border-amber-400 bg-amber-50 md:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center text-amber-900 font-bold">
+                  <Users className="w-5 h-5 mr-2" />
+                  Clear Data for a Specific Proctor
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-700 mb-4">
+                  Select a proctor and permanently delete all their exams, exam sessions, and proctoring flags.
+                  <span className="font-semibold text-amber-800"> Their account will NOT be deleted.</span>
+                </p>
+                <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                  <select
+                    className="flex-1 border border-amber-300 rounded-md px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+                    value={selectedProctorForReset}
+                    onChange={(e) => setSelectedProctorForReset(e.target.value)}
+                  >
+                    <option value="">— Select a Proctor —</option>
+                    {proctors.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name} ({p.email})
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    variant="destructive"
+                    className="bg-amber-600 hover:bg-amber-700 whitespace-nowrap"
+                    disabled={isResetting || !selectedProctorForReset}
+                    onClick={async () => {
+                      const proctor = proctors.find(p => p.id === selectedProctorForReset);
+                      if (!proctor) return;
+                      if (!window.confirm(`⚠️ WARNING ⚠️\n\nDelete all data (exams, sessions, flags) for proctor:\n"${proctor.name}"\n\nThis CANNOT be undone.`)) return;
+
+                      setIsResetting(true);
+                      try {
+                        const res = await fetch(`http://localhost:8000/api/admin/reset/proctor/${selectedProctorForReset}`, {
+                          method: 'DELETE',
+                          headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                          toast({ title: 'Done', description: data.message });
+                          setSelectedProctorForReset('');
+                        } else {
+                          toast({ title: 'Error', description: data.detail || 'Failed.', variant: 'destructive' });
+                        }
+                      } catch {
+                        toast({ title: 'Error', description: 'Network error.', variant: 'destructive' });
+                      } finally {
+                        setIsResetting(false);
+                      }
+                    }}
+                  >
+                    {isResetting ? 'Deleting...' : 'Delete Proctor Data'}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Master Reset — full width */}
+            <Card className="border-red-700 bg-red-50 md:col-span-2">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center text-red-900 font-bold">
+                  <AlertTriangle className="w-5 h-5 mr-2" />
+                  Master Reset — Delete Everything
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-gray-800 font-medium mb-3">
+                  Wipe the entire database clean: all Exams, Sessions, Flags, and Students will be permanently deleted.
+                </p>
+                <Button variant="destructive" className="w-full bg-red-900 hover:bg-red-950 font-bold text-base py-5" disabled={isResetting}
+                  onClick={() => handleAdminReset('all', 'ENTIRE DATABASE (Exams, Sessions, Flags, Students)')}>
+                  {isResetting ? 'Processing...' : '☢ Master Reset'}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
       </div>
     </div>
   );
