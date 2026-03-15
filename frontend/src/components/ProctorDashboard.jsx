@@ -939,7 +939,7 @@ const ProctorDashboard = () => {
                                       const win = window.open();
                                       let imagesHtml = flagGroup.occurrences
                                           .filter(occ => occ.evidence_image)
-                                          .map(occ => `<div style="text-align:center;margin-bottom:2rem;"><p style="color:white;font-family:sans-serif;">${new Date(occ.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</p><img src="${occ.evidence_image}" style="max-width:90%;max-height:80vh;border:2px solid white;"/></div>`)
+                                          .map(occ => `<div style="text-align:center;margin-bottom:2rem;"><p style="color:white;font-family:sans-serif;">${new Date(occ.timestamp.endsWith('Z') ? occ.timestamp : occ.timestamp + 'Z').toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</p><img src="${occ.evidence_image}" style="max-width:90%;max-height:80vh;border:2px solid white;"/></div>`)
                                           .join('');
                                           
                                       if (!imagesHtml) {
@@ -1373,7 +1373,7 @@ const ProctorDashboard = () => {
                                                             // allowing proctors to see *all* photos of the occurrences. 
                                                             let imagesHtml = flagGroup.occurrences
                                                                 .filter(occ => occ.evidence_image)
-                                                                .map(occ => `<div style="text-align:center;margin-bottom:2rem;"><p style="color:white;font-family:sans-serif;">${new Date(occ.timestamp).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</p><img src="${occ.evidence_image}" style="max-width:90%;max-height:80vh;border:2px solid white;"/></div>`)
+                                                                .map(occ => `<div style="text-align:center;margin-bottom:2rem;"><p style="color:white;font-family:sans-serif;">${new Date(occ.timestamp.endsWith('Z') ? occ.timestamp : occ.timestamp + 'Z').toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</p><img src="${occ.evidence_image}" style="max-width:90%;max-height:80vh;border:2px solid white;"/></div>`)
                                                                 .join('');
                                                                 
                                                             if (!imagesHtml) {

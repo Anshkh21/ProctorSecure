@@ -40,6 +40,12 @@ module.exports = {
         };
       }
       
+      // Suppress missing source map warnings from node_modules (e.g. @tensorflow-models/coco-ssd)
+      webpackConfig.ignoreWarnings = [
+        ...(webpackConfig.ignoreWarnings || []),
+        /Failed to parse source map/,
+      ];
+
       return webpackConfig;
     },
   },
