@@ -117,3 +117,11 @@ The application will be available at `http://localhost:3000`.
 ## 🤝 Contributing
 
 Contributions are welcome! Please fork the repository and submit a pull request for review.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Copyright (c) 2026 Ansh Khatod
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software to use it with attribution. This means the original author's name must stay in the code.
