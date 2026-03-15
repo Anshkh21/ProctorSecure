@@ -120,8 +120,8 @@ Contributions are welcome! Please fork the repository and submit a pull request 
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+**Copyright (c) 2026 Ansh Khatod. All Rights Reserved.**
 
-Copyright (c) 2026 Ansh Khatod
+This project and its original source code are proprietary and confidential. No part of this software may be copied, reproduced, distributed, or adapted in any form or by any means without the prior written permission of the copyright owner.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software to use it with attribution. This means the original author's name must stay in the code.
+You are permitted to view the source code and submit pull requests to suggest changes, but you may not use this code in your own projects, whether commercial or non-commercial.
