@@ -1,27 +1,26 @@
-# ProctorSecure - Advanced AI Proctoring Tool
+# ProctorSecure - Advanced AI Remote Proctoring & Online Exam Security Tool
 
-ProctorSecure is a state-of-the-art, AI-powered remote proctoring solution designed to ensure the integrity of online exams. It leverages advanced machine learning models for real-time monitoring, identity verification, and environment analysis, providing a secure and scalable platform for educational institutions and certification bodies.
+ProctorSecure is a state-of-the-art, **AI-powered remote proctoring solution** designed to ensure the integrity of online exams and assessments. It leverages advanced machine learning models for real-time monitoring, automated identity verification, and anti-cheating environment analysis, providing a secure, scalable, and automated proctoring platform for educational institutions, universities, and certification bodies.
 
-## 🚀 Key Features
+## 🚀 Key Features & Capabilities
 
-### 🧠 AI-Powered Monitoring
-*   **Object Detection:** Real-time detection of prohibited items such as **cell phones, laptops, and books** using TensorFlow.js (COCO-SSD) to prevent cheating.
-*   **Identity Verification:** Robust biometric verification using **DeepFace** to match the student's live face against their ID card with high accuracy.
-*   **Face Detection:** Continuous monitoring to ensure the registered student is present and alone during the exam.
-*   **Gaze Tracking:** (Planned) Analysis of eye movements to detect suspicious behavior.
-*   **Audio Monitoring:** Detection of suspicious audio levels and background voices.
+### 🧠 AI proctoring & Automated Monitoring
+*   **Real-Time Object Detection:** Automated detection of prohibited items such as **cell phones, laptops, and books** using TensorFlow.js (COCO-SSD) to prevent cheating during online tests.
+*   **Biometric Identity Verification:** Robust facial recognition and identity verification using **DeepFace** to match the student's live webcam feed against their official ID card with high accuracy.
+*   **Continuous Face Detection:** Live webcam monitoring to ensure the registered student is present, focused, and alone during the entire exam session.
+*   **Gaze Tracking & Eye Movement Analysis:** (Planned) Advanced tracking to detect suspicious behavior and off-screen looking.
+*   **Automated Audio Monitoring:** Detection of suspicious audio levels, background voices, and unauthorized communication.
 
-### 🔒 comprehensive Security
-*   **Browser Lockdown:** Aggressive **Fullscreen Enforcement** with a visual blocking overlay if the user exits fullscreen mode.
-*   **Anti-Cheat Measures:**
-    *   **Tab Switching Detection:** Alerts and logs incidents when the user leaves the exam tab.
-    *   **Copy/Paste Prevention:** Disables clipboard shortcuts (Copy, Cut, Paste) and context menus.
-    *   **DevTools Detection:** (Planned) Prevents inspection of the exam interface.
+### 🔒 Comprehensive Exam Security & Anti-Cheat System
+*   **Secure Browser Lockdown:** Aggressive **Fullscreen Enforcement** with a visual blocking overlay if the user attempts to exit fullscreen mode.
+*   **Tab Switching & Navigation Detection:** Alerts and automatically logs incidents when the test-taker leaves the active exam tab.
+*   **Copy/Paste & Shortcut Prevention:** Disables clipboard shortcuts (Copy, Cut, Paste) and right-click context menus to prevent content theft.
+*   **DevTools Detection:** (Planned) Prevents inspection or manipulation of the online exam interface.
 
-### 📊 Dashboard & Analytics
-*   **Proctor Dashboard:** Real-time view of all active sessions, live video feeds, and flagged incidents.
-*   **Incident Logging:** Detailed logs of all security violations with timestamps and evidence snapshots.
-*   **Student Dashboard:** Clean, intuitive interface for students to register, verify identity, and take exams.
+### 📊 Proctor Dashboard & Incident Analytics
+*   **Live Proctor Dashboard:** Real-time, centralized view of all active test sessions, live video feeds, and automatically flagged suspicious activities.
+*   **Detailed Incident Logging:** Comprehensive logs of all security violations, cheating attempts, with timestamped evidence snapshots.
+*   **Student portal:** Clean, intuitive interface for students to register, verify identity (KYC), and take secure exams.
 
 ## 🛠 Tech Stack
 
