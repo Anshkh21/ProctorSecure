@@ -1,7 +1,7 @@
 FROM python:3.10-slim
 
-# Install system dependencies for OpenCV and MediaPipe
-RUN apt-get update && apt-get install -y libgl1-mesa-glx libglib2.0-0
+# Install system dependencies for OpenCV and MediaPipe (libgl1 replaces libgl1-mesa-glx on newer Debian)
+RUN apt-get update && apt-get install -y libgl1 libglib2.0-0
 
 WORKDIR /app
 COPY requirements.txt .

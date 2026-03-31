@@ -21,6 +21,7 @@ pydantic
 python-jose[cryptography]
 passlib[bcrypt]
 python-dotenv
+PyJWT
 
 opencv-contrib-python
 mediapipe==0.10.14
