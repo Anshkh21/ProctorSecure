@@ -75,12 +75,18 @@ origins = [
     "http://127.0.0.1:8000",
 ]
 
+# Allow dynamic frontend URL from environment if provided
+frontend_url = os.environ.get('FRONTEND_URL')
+if frontend_url:
+    origins.append(frontend_url)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_origin_regex=r"https://.*\.vercel\.app", # Auto-allows any Vercel deployment
 )
 
 # Create a router with the /api prefix
