@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import ReCAPTCHA from 'react-google-recaptcha';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -70,12 +71,49 @@ const DarkInput = ({ id, type, placeholder, value, onChange, onKeyDown }) => (
 const LandingPage = () => {
   const [loginData, setLoginData] = useState({ email: '', password: '' });
   const [isLoading, setIsLoading] = useState(false);
+  const [recaptchaToken, setRecaptchaToken] = useState(null);
+  const recaptchaRef = useRef(null);
   const navigate  = useNavigate();
   const { toast } = useToast();
+
+  useEffect(() => {
+    const checkLoginStatus = () => {
+      const token = localStorage.getItem('token');
+      const userStr = localStorage.getItem('user');
+      
+      if (token && userStr) {
+        try {
+          const user = JSON.parse(userStr);
+          const payloadBase64 = token.split('.')[1];
+          const payloadStr = atob(payloadBase64.replace(/-/g, '+').replace(/_/g, '/'));
+          const payload = JSON.parse(payloadStr);
+          const isExpired = payload.exp * 1000 < Date.now();
+          
+          if (!isExpired) {
+            if (user.role === 'student') navigate('/student');
+            else if (user.role === 'proctor') navigate('/proctor');
+            else navigate('/admin');
+          } else {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            toast({ title: 'Session Expired', description: 'Your session has expired. Please log in again.', variant: 'destructive' });
+          }
+        } catch (err) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+        }
+      }
+    };
+    checkLoginStatus();
+  }, [navigate, toast]);
 
   const handleLogin = async (role) => {
     if (!loginData.email || !loginData.password) {
       toast({ title: 'Error', description: 'Please enter email and password', variant: 'destructive' });
+      return;
+    }
+    if (!recaptchaToken) {
+      toast({ title: 'Error', description: 'Please complete the reCAPTCHA verification', variant: 'destructive' });
       return;
     }
     setIsLoading(true);
@@ -92,6 +130,8 @@ const LandingPage = () => {
                 : err.response?.status === 404 ? 'User not found.'
                 : 'Login failed.';
       toast({ title: 'Login Failed', description: msg, variant: 'destructive' });
+      if (recaptchaRef.current) recaptchaRef.current.reset();
+      setRecaptchaToken(null);
     } finally { setIsLoading(false); }
   };
 
@@ -260,6 +300,15 @@ const LandingPage = () => {
                           value={loginData.password}
                           onChange={e => setLoginData({...loginData, password: e.target.value})}
                           onKeyDown={e => e.key==='Enter' && handleLogin(role)}
+                        />
+                      </div>
+
+                      <div style={{ margin: '10px 0', display: 'flex', justifyContent: 'center' }}>
+                        <ReCAPTCHA
+                          ref={recaptchaRef}
+                          sitekey={process.env.REACT_APP_RECAPTCHA_SITE_KEY || "6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"}
+                          onChange={(val) => setRecaptchaToken(val)}
+                          theme="dark"
                         />
                       </div>
 

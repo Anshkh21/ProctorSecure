@@ -53,6 +53,9 @@ const AdminDashboard = () => {
     const user = JSON.parse(localStorage.getItem('user') || '{}');
     
     if (!token || user.role !== 'admin') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      sessionStorage.clear();
       navigate('/');
       return;
     }
@@ -189,6 +192,7 @@ const AdminDashboard = () => {
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    sessionStorage.clear();
     navigate('/');
   };
 

@@ -23,8 +23,44 @@ from ml_models import ProctoringModel
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
+import urllib.parse
+
 # MongoDB connection
-mongo_url = os.environ['MONGO_URL']
+raw_mongo_url = os.environ['MONGO_URL']
+def escape_mongo_url(url: str) -> str:
+    if not url: return url
+    scheme_end = url.find('://')
+    if scheme_end == -1: return url
+    prefix = url[:scheme_end+3]
+    rest = url[scheme_end+3:]
+    
+    auth_end = rest.find('/')
+    q_end = rest.find('?')
+    if auth_end == -1 and q_end == -1:
+        authority = rest; path_query = ""
+    elif auth_end != -1 and (q_end == -1 or auth_end < q_end):
+        authority = rest[:auth_end]; path_query = rest[auth_end:]
+    else:
+        authority = rest[:q_end]; path_query = rest[q_end:]
+        
+    at_index = authority.rfind('@')
+    if at_index == -1: return url
+        
+    credentials = authority[:at_index]
+    host_info = authority[at_index+1:]
+    
+    colon_index = credentials.find(':')
+    if colon_index == -1:
+        user = urllib.parse.quote_plus(urllib.parse.unquote_plus(credentials))
+        userinfo = user
+    else:
+        user = urllib.parse.quote_plus(urllib.parse.unquote_plus(credentials[:colon_index]))
+        pwd = urllib.parse.quote_plus(urllib.parse.unquote_plus(credentials[colon_index+1:]))
+        userinfo = f"{user}:{pwd}"
+        
+    return f"{prefix}{userinfo}@{host_info}{path_query}"
+
+mongo_url = escape_mongo_url(raw_mongo_url)
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 

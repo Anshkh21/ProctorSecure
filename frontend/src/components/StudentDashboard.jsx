@@ -29,6 +29,9 @@ const StudentDashboard = () => {
     if (userData) {
       setUser(JSON.parse(userData));
     } else {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      sessionStorage.clear();
       navigate('/');
     }
   };
@@ -37,6 +40,9 @@ const StudentDashboard = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        sessionStorage.clear();
         navigate('/');
         return;
       }
@@ -54,6 +60,7 @@ const StudentDashboard = () => {
       if (error.response?.status === 401) {
         localStorage.removeItem('token');
         localStorage.removeItem('user');
+        sessionStorage.clear();
         navigate('/');
       } else {
         toast({
@@ -101,6 +108,7 @@ const StudentDashboard = () => {
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
+    sessionStorage.clear();
     navigate('/');
   };
 

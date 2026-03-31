@@ -72,7 +72,10 @@ const ProctorDashboard = () => {
     try {
       const token = localStorage.getItem('token');
       if (!token) {
-        navigate('/login');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        sessionStorage.clear();
+        navigate('/');
         return;
       }
       
@@ -110,7 +113,10 @@ const ProctorDashboard = () => {
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
       if (error.response && error.response.status === 401) {
-        navigate('/login');
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        sessionStorage.clear();
+        navigate('/');
       }
     }
   };
@@ -399,6 +405,14 @@ const ProctorDashboard = () => {
     });
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    sessionStorage.clear();
+    toast({ title: "Logged out", description: "You have been successfully logged out." });
+    navigate('/');
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50">
       {/* Header */}
@@ -425,7 +439,7 @@ const ProctorDashboard = () => {
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
+              <Button variant="ghost" size="sm" onClick={handleLogout}>
                 <LogOut className="w-4 h-4 mr-2" />
                 Logout
               </Button>
@@ -980,10 +994,10 @@ const ProctorDashboard = () => {
                       <div className="flex justify-between mb-2">
                         <span className="text-sm text-gray-600">Overall Progress</span>
                         <span className="text-sm font-medium">
-                          {analyticsStudents.length > 0 ? Math.round(analyticsStudents.reduce((acc, s) => acc + (s.progress || 0), 0) / analyticsStudents.length) : 0}%
+                          {analyticsStudents.length > 0 ? Math.round(analyticsStudents.reduce((acc, s) => acc + (s.status === 'completed' ? 100 : (s.progress || 0)), 0) / analyticsStudents.length) : 0}%
                         </span>
                       </div>
-                      <Progress value={analyticsStudents.length > 0 ? Math.round(analyticsStudents.reduce((acc, s) => acc + (s.progress || 0), 0) / analyticsStudents.length) : 0} />
+                      <Progress value={analyticsStudents.length > 0 ? Math.round(analyticsStudents.reduce((acc, s) => acc + (s.status === 'completed' ? 100 : (s.progress || 0)), 0) / analyticsStudents.length) : 0} />
                     </div>
                     <div className="pt-4 space-y-2">
                       <p className="text-sm text-gray-600">Students completed: {analyticsStudents.filter(s => s.status === 'completed').length}</p>
