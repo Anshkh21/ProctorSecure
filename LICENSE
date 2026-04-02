@@ -1,9 +1,79 @@
-Copyright (c) 2026 Ansh Khatod
+PROPRIETARY SOFTWARE LICENSE
 
-All Rights Reserved
+Copyright (c) 2024–2026 Ansh Khatod. All Rights Reserved.
 
-This software and associated documentation files (the "Software") are proprietary and confidential. 
+================================================================================
+                        ALL RIGHTS RESERVED
+================================================================================
 
-No part of this Software may be reproduced, distributed, copied, modified, or adapted in any form or by any means, without the prior written permission of the copyright owner, Ansh Khatod. 
+OWNERSHIP & INTELLECTUAL PROPERTY
+----------------------------------
+This software, all associated documentation, source code, object code, designs,
+architecture, algorithms, concepts, ideas, workflows, user interface designs,
+and any other materials contained in this repository (collectively, the
+"Software") are the exclusive intellectual property of Ansh Khatod
+("the Owner").
 
-This repository is strictly for viewing purposes only. By accessing this repository, you agree to these terms. You are permitted to fork the repository for the sole purpose of submitting pull requests (suggesting changes) back to the original repository. However, you may NOT use, compile, run, or distribute this code in your own projects, whether commercial or non-commercial.
+All copyrights, trademarks, trade secrets, patents (pending or granted), and
+any other intellectual property rights in and to the Software are and shall
+remain solely and exclusively owned by the Owner.
+
+This includes, but is not limited to:
+  - All source code files and their contents
+  - All design ideas, system architecture, and conceptual approaches
+  - All algorithms, logic flows, and implementation strategies
+  - All user interface designs, layouts, and experiences
+  - All documentation, comments, and written materials
+
+PERMITTED USE
+-------------
+You MAY:
+  - View and read the source code for personal, educational reference only.
+  - Fork this repository solely for the purpose of submitting pull requests
+    (suggested changes) back to the original repository owned by Ansh Khatod.
+
+PROHIBITED USE
+--------------
+You MAY NOT, without prior explicit written permission from the Owner:
+  - Copy, reproduce, or duplicate any part of this Software.
+  - Modify, adapt, translate, or create derivative works based on this Software.
+  - Distribute, publish, sublicense, sell, rent, lease, or transfer this
+    Software or any portion thereof.
+  - Use this Software, in whole or in part, in any personal, academic,
+    commercial, or non-commercial project.
+  - Compile, execute, or deploy this Software outside of the official
+    repository environment.
+  - Reverse engineer, decompile, or disassemble this Software.
+  - Claim ownership of, or present as your own, any idea, concept, design,
+    or implementation found in this Software.
+  - Use the name, branding, or likeness of this project or its Owner for
+    endorsement or promotion without written consent.
+
+NO LICENSE GRANTED
+------------------
+The publication of this repository on a public platform does NOT constitute
+a grant of any license, permission, or right to use the Software beyond
+viewing. No open-source license applies. No implied license is granted.
+
+DISCLAIMER OF WARRANTIES
+-------------------------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED. THE OWNER SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY ARISING FROM OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+ENFORCEMENT
+-----------
+Any unauthorized use, reproduction, or distribution of this Software, in whole
+or in part, may result in severe civil and criminal penalties and will be
+prosecuted to the maximum extent possible under applicable law.
+
+CONTACT
+-------
+For licensing inquiries or written permission requests, contact the Owner
+directly through the official GitHub repository:
+https://github.com/Anshkh21/ProctorSecure
+
+================================================================================
+Copyright (c) 2024–2026 Ansh Khatod. All Rights Reserved.
+================================================================================

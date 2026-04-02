@@ -115,12 +115,24 @@ The application will be available at `http://localhost:3000`.
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please fork the repository and submit a pull request for review.
+You may fork this repository **only** to submit pull requests (suggested changes) back to the original repository. Forking for any other purpose, including using this code in your own projects, is strictly prohibited.
 
 ## 📄 License
 
-**Copyright (c) 2026 Ansh Khatod. All Rights Reserved.**
+**© 2024–2026 Ansh Khatod. All Rights Reserved.**
 
-This project and its original source code are proprietary and confidential. No part of this software may be copied, reproduced, distributed, or adapted in any form or by any means without the prior written permission of the copyright owner.
+This software and all associated source code, designs, ideas, concepts, and documentation are the **exclusive intellectual property of Ansh Khatod** and are protected under copyright law.
 
-You are permitted to view the source code and submit pull requests to suggest changes, but you may not use this code in your own projects, whether commercial or non-commercial.
+> **This is NOT open-source software.**
+
+**You MAY:**
+- View the source code for reference only.
+- Submit pull requests to suggest changes back to this repository.
+
+**You MAY NOT:**
+- Copy, reproduce, or use any part of this code in your own projects.
+- Modify, distribute, sell, or create derivative works from this software.
+- Claim ownership of any idea, design, or implementation found here.
+
+Any unauthorized use will be prosecuted to the fullest extent of applicable law.
+See the [LICENSE](./LICENSE) file for full terms.
