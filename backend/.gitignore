@@ -1,0 +1,29 @@
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+
+# Large model/binary files
+*.pt
+*.pth
+*.h5
+*.pkl
+*.onnx
+
+# Logs and temp files
+*.log
+pip_error.txt
+pip_list.txt
+dump.rdb
+
+# OS
+.DS_Store
